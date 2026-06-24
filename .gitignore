@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Debug logs (only generated with --debug flag)
+*.log
+
+# Device diagnostic reports
+device_diag_*.txt
+
+# CSV recording files (generated at runtime)
+*.csv
+
+# User overrides
+temp_map.json
+
+# Bundled runtime (not tracked in git)
+platform-tools/
+python/

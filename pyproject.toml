@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "adb-fps-monitor"
+version = "1.0.0"
+description = "ADB 实时性能监控工具 — PyQtGraph 本地图形化界面"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "PyQt6>=6.5.0",
+    "pyqtgraph>=0.13.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+dev = ["pyinstaller", "pytest>=7.0"]
+
+[project.scripts]
+adb-fps-monitor = "adb_fps_monitor:main"
+
+[tool.setuptools]
+py-modules = ["adb_fps_monitor"]
+packages = ["core", "gui"]

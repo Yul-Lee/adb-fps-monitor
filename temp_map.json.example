@@ -1,0 +1,6 @@
+{
+  "_comment": "自定义温度传感器映射。key 为 thermal_zone 类型名，value 为显示名。带 _ 前缀的键会被忽略。",
+  "my_custom_therm": "自定义名称",
+  "soc_thermal_zone0": "SoC",
+  "cpu_thermal_zone": "CPU"
+}

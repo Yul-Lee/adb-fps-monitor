@@ -53,7 +53,7 @@ class ADBRunner:
         out, rc = "", 1
         for attempt in range(retries + 1):
             out, rc = self.run_shell(cmd, timeout=timeout)
-            if rc == 0 and out:
+            if out:
                 return out, rc
             if attempt < retries:
                 _time.sleep(retry_delay)

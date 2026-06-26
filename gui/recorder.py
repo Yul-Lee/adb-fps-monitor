@@ -173,3 +173,69 @@ class CSVRecorder:
         if self._rows_since_flush >= _FLUSH_INTERVAL:
             self._csv_file.flush()
             self._rows_since_flush = 0
+
+    def save_snapshot(self, fps_x: list, fps_y: list,
+                      last_temps: dict, last_freqs: dict,
+                      last_power: dict, last_mem: dict,
+                      last_net: dict) -> str | None:
+        """一次性保存全部 FPS 数据到 CSV，返回文件名"""
+        if not fps_x:
+            return None
+
+        # 停止正在进行的录制
+        if self._recording:
+            self.stop()
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        fname = f"fps_record_{ts}.csv"
+
+        # 构建列
+        temp_cols = sorted(last_temps.keys())
+        freq_cols = []
+        core_freq_cols = []
+        core_usage_cols = []
+        for name in last_freqs:
+            if name.startswith("Core") and name.endswith("(MHz)"):
+                core_freq_cols.append(name)
+            elif name.startswith("CPU") and name.endswith("(%)") and name != "CPU负载(%)":
+                core_usage_cols.append(name)
+            elif not name.startswith("Core") and not (name.startswith("CPU") and name.endswith("(%)")) and name != "GPU负载(%)":
+                freq_cols.append(name)
+
+        header = ["时间(s)", "FPS", "帧时间(ms)"]
+        header += freq_cols + core_freq_cols + core_usage_cols + temp_cols
+        header += ["功率(mW)", "电流(mA)", "电压(V)", "电量(%)"]
+        header += ["GPU显存(MB)", "PSS内存(MB)"]
+        header += ["下行(KB/s)", "上行(KB/s)"]
+
+        try:
+            with open(fname, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(header)
+                for i in range(len(fps_x)):
+                    t = round(fps_x[i], 2)
+                    fps = fps_y[i]
+                    ft = round(1000.0 / fps, 1) if fps > 0.1 else 0
+                    row = [t, fps, ft]
+                    for c in freq_cols:
+                        row.append(last_freqs.get(c, 0))
+                    for c in core_freq_cols:
+                        row.append(last_freqs.get(c, 0))
+                    for c in core_usage_cols:
+                        row.append(last_freqs.get(c, 0))
+                    for c in temp_cols:
+                        row.append(last_temps.get(c, 0))
+                    row.append(last_power.get("功率(mW)", 0))
+                    row.append(last_power.get("电流(mA)", 0))
+                    row.append(last_power.get("电压(V)", 0))
+                    row.append(last_power.get("电量(%)", 0))
+                    row.append(last_mem.get("GPU显存(MB)", 0))
+                    row.append(last_mem.get("PSS内存(MB)", 0))
+                    row.append(last_net.get("下行(KB/s)", 0))
+                    row.append(last_net.get("上行(KB/s)", 0))
+                    writer.writerow(row)
+            logging.info("数据已保存: %s", fname)
+            return fname
+        except OSError:
+            logging.exception("保存数据失败")
+            return None

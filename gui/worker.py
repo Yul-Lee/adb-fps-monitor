@@ -26,6 +26,7 @@ class FPSUpdate:
     fps_max: float
     t: float
     count: int
+    source_name: str = ""
 
 
 # ─── 基础 Worker ─────────────────────────
@@ -116,7 +117,8 @@ class FPSWorker(BaseWorker):
         self.fps_min = min(self.fps_min, fps)
         self.fps_max = max(self.fps_max, fps)
         avg = round(self.fps_sum / self.fps_count, 1)
-        self.fps_ready.emit(FPSUpdate(fps, avg, self.fps_min, self.fps_max, t, self.fps_count))
+        src = self.fps_src.active_source_name or ""
+        self.fps_ready.emit(FPSUpdate(fps, avg, self.fps_min, self.fps_max, t, self.fps_count, src))
 
     def reset_time(self, start_time: float) -> None:
         self.start_time = start_time
@@ -155,7 +157,7 @@ class GenericSensorWorker(BaseWorker):
 
 class DeviceInfoWorker(QThread):
     """后台线程获取设备信息，避免阻塞 GUI"""
-    finished = pyqtSignal(str)
+    finished = pyqtSignal(dict)
 
     def __init__(self, adb):
         super().__init__()
@@ -164,27 +166,75 @@ class DeviceInfoWorker(QThread):
     def run(self) -> None:
         try:
             from core.adb import get_device_info
+            info = {}
             brand, model = get_device_info(self.adb.serial)
             if self.isInterruptionRequested():
-                self.finished.emit("")
+                self.finished.emit({})
                 return
-            device_info = f"{brand} {model}" if model else (self.adb.serial or "未知设备")
-            out, _ = self.adb.run_shell("getprop ro.build.version.release")
+            info["brand"] = brand
+            info["model"] = model
+
+            # 逐个读取设备属性（getprop 不支持多参数批量输出）
+            PROP_MAP = {
+                "ro.product.device": "device",
+                "ro.build.version.release": "android",
+                "ro.build.version.sdk": "sdk",
+                "ro.hardware.chipname": "chipname",
+                "ro.board.platform": "platform",
+                "ro.soc.model": "soc_model",
+                "ro.hardware": "hardware",
+                "ro.hardware.vulkan": "gpu_vulkan",
+            }
+            cmd = ";".join(f"getprop {p}" for p in PROP_MAP)
+            out, _ = self.adb.run_shell(cmd, timeout=10)
             if self.isInterruptionRequested():
-                self.finished.emit("")
+                self.finished.emit({})
                 return
-            android_ver = out.strip() if out else "?"
-            soc = ""
-            for prop in ["ro.hardware.chipname", "ro.board.platform", "ro.soc.model", "ro.hardware"]:
-                out, _ = self.adb.run_shell(f"getprop {prop}")
-                if self.isInterruptionRequested():
-                    self.finished.emit("")
-                    return
-                if out and out.strip():
-                    soc = out.strip()
-                    break
-            info_text = f"{device_info}\nAndroid {android_ver} | {soc}"
-            self.finished.emit(info_text)
+
+            if out:
+                lines = [l.strip() for l in out.strip().split("\n")]
+                for i, key in enumerate(PROP_MAP.values()):
+                    if i < len(lines) and lines[i]:
+                        info[key] = lines[i]
+
+            # SoC 显示名：优先 chipname → soc_model → platform
+            info["soc"] = info.get("chipname") or info.get("soc_model") or info.get("platform") or ""
+            # GPU 显示名：优先 vulkan → hardware
+            raw_gpu = info.get("gpu_vulkan") or info.get("hardware") or ""
+            info["gpu"] = raw_gpu.capitalize() if raw_gpu else ""
+
+            # CPU 核数 + 各簇核心数（复用 cpufreq policy 结构）
+            out, _ = self.adb.run_shell(
+                "nproc --all; "
+                "for p in /sys/devices/system/cpu/cpufreq/policy*/; do "
+                "wc -w < ${p}related_cpus 2>/dev/null; done",
+                timeout=5
+            )
+            if self.isInterruptionRequested():
+                self.finished.emit({})
+                return
+
+            if out:
+                lines = [l.strip() for l in out.strip().split("\n") if l.strip()]
+                cpu_cores = lines[0] if lines else ""
+                info["cpu_cores"] = cpu_cores
+                # wc -w 直接输出每个簇的核心数
+                cluster_counts = [line for line in lines[1:] if line.isdigit()]
+                if cluster_counts:
+                    info["cpu_text"] = f"{cpu_cores} 核 ({'+'.join(cluster_counts)})"
+                elif cpu_cores:
+                    info["cpu_text"] = f"{cpu_cores} 核"
+
+            # 内存
+            out, _ = self.adb.run_shell("head -1 /proc/meminfo", timeout=3)
+            if out:
+                try:
+                    kb = int(out.strip().split()[1])
+                    info["ram_text"] = f"{round(kb / 1048576)} GB"
+                except (ValueError, IndexError):
+                    pass
+
+            self.finished.emit(info)
         except Exception:
             logging.exception("DeviceInfoWorker failed")
-            self.finished.emit(self.adb.serial or "未知设备")
+            self.finished.emit({"brand": self.adb.serial or "未知设备"})

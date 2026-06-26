@@ -1,9 +1,10 @@
-"""UI 组件 — StatCard、CrosshairChart、FPSChart、TimeAxisWidget、LoadingOverlay"""
+"""UI 组件 — StatCard、CrosshairChart、FPSChart、TimeAxisWidget、DeviceInfoPanel、ChartPanel、SettingsPanel"""
 
-import sys
 import bisect
 
-from PyQt6.QtWidgets import (QLabel, QWidget, QVBoxLayout, QPushButton)
+from PyQt6.QtWidgets import (QLabel, QWidget, QVBoxLayout, QHBoxLayout,
+                              QGridLayout, QPushButton, QFrame, QCheckBox,
+                              QComboBox, QScrollArea)
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QElapsedTimer
 import pyqtgraph as pg
 
@@ -352,73 +353,382 @@ class TimeAxisWidget(pg.PlotWidget):
         self.setLimits(xMin=0, xMax=new_range)
 
 
-# ─── Loading Overlay ─────────────────
 
-class LoadingOverlay(QWidget):
-    """启动加载遮罩层（主窗口内部子组件）"""
+# ─── DeviceInfoPanel ────────────────
 
-    cancelled = pyqtSignal()
+class DeviceInfoPanel(QWidget):
+    """左侧设备信息面板 — 设备选择 + 信息展示 + 控制按钮"""
 
-    def __init__(self, parent: QWidget | None = None):
+    device_selected = pyqtSignal(int)
+    start_pause_clicked = pyqtSignal()
+    stop_clicked = pyqtSignal()
+    save_clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet("background: #1e1e2e;")
-        if parent:
-            self.setGeometry(parent.rect())
-        self.show()
-        self.raise_()
+        self.setFixedWidth(200)
+        self.setStyleSheet("background: #181825;")
+
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(12, 12, 12, 12)
+        self._layout.setSpacing(0)
+
+        # ─── 设备选择 ───
+        self._lbl_title = QLabel(" 设备")
+        self._lbl_title.setStyleSheet("color: #89b4fa; font-size: 14px; font-weight: bold; padding: 4px 0;")
+        self._layout.addWidget(self._lbl_title)
+        self._add_sep()
+
+        row = QHBoxLayout()
+        row.setSpacing(4)
+        self.device_combo = QComboBox()
+        self.device_combo.setStyleSheet("""
+            QComboBox { background: #313244; color: #cdd6f4; border: 1px solid #45475a;
+                        border-radius: 4px; padding: 4px 8px; font-size: 12px; }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView { background: #313244; color: #cdd6f4;
+                                          selection-background-color: #45475a; }
+        """)
+        self.device_combo.currentIndexChanged.connect(self.device_selected.emit)
+        row.addWidget(self.device_combo, stretch=1)
+        self.btn_refresh = QPushButton("↻")
+        self.btn_refresh.setFixedSize(28, 28)
+        self.btn_refresh.setStyleSheet("""
+            QPushButton { background: #313244; color: #cdd6f4; border: 1px solid #45475a;
+                          border-radius: 4px; font-size: 14px; }
+            QPushButton:hover { background: #45475a; }
+        """)
+        row.addWidget(self.btn_refresh)
+        self._layout.addLayout(row)
+        self._layout.addSpacing(8)
+
+        # ─── 设备信息 ───
+        self._lbl_device = self._add_section("设备", "等待选择...")
+        self._lbl_android = self._add_section("系统", "—")
+        self._lbl_soc = self._add_section("SoC", "—")
+        self._lbl_cpu = self._add_section("CPU", "—")
+        self._lbl_gpu = self._add_section("GPU 类型", "—")
+        self._lbl_ram = self._add_section("内存", "—")
+
+        self._layout.addStretch()
+
+        # ─── 控制按钮 ───
+        self._add_sep()
+        self._layout.addSpacing(6)
+
+        self.btn_start = QPushButton("▶ 开始")
+        self.btn_start.setFixedHeight(36)
+        self.btn_start.setStyleSheet("""
+            QPushButton { background: #a6e3a1; color: #1e1e2e; font-size: 13px; font-weight: bold;
+                          border-radius: 6px; padding: 4px 12px; }
+            QPushButton:hover { background: #94e2d5; }
+            QPushButton:disabled { background: #45475a; color: #6c7086; }
+        """)
+        self.btn_start.setEnabled(False)
+        self.btn_start.clicked.connect(self.start_pause_clicked.emit)
+        self._layout.addWidget(self.btn_start)
+
+        self._layout.addSpacing(4)
+
+        self.btn_stop = QPushButton("⏹ 结束")
+        self.btn_stop.setFixedHeight(36)
+        self.btn_stop.setStyleSheet("""
+            QPushButton { background: #313244; color: #f38ba8; font-size: 13px; font-weight: bold;
+                          border-radius: 6px; padding: 4px 12px; border: 2px solid #45475a; }
+            QPushButton:hover { background: #45475a; }
+            QPushButton:disabled { background: #313244; color: #6c7086; border-color: #313244; }
+        """)
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.clicked.connect(self.stop_clicked.emit)
+        self._layout.addWidget(self.btn_stop)
+
+        self._layout.addSpacing(4)
+
+        self.btn_save = QPushButton("⏺ 录制")
+        self.btn_save.setFixedHeight(36)
+        self.btn_save.setStyleSheet("""
+            QPushButton { background: #313244; color: #a6e3a1; font-size: 13px; font-weight: bold;
+                          border-radius: 6px; padding: 4px 12px; border: 2px solid #45475a; }
+            QPushButton:hover { background: #45475a; }
+            QPushButton:disabled { background: #313244; color: #6c7086; border-color: #313244; }
+        """)
+        self.btn_save.setEnabled(False)
+        self.btn_save.clicked.connect(self.save_clicked.emit)
+        self._layout.addWidget(self.btn_save)
+
+        self._layout.addSpacing(4)
+
+        self.btn_settings = QPushButton("⚙ 设置")
+        self.btn_settings.setFixedHeight(36)
+        self.btn_settings.setStyleSheet("""
+            QPushButton { background: #313244; color: #cdd6f4; font-size: 13px; font-weight: bold;
+                          border-radius: 6px; padding: 4px 12px; border: 2px solid #45475a; }
+            QPushButton:hover { background: #45475a; }
+        """)
+        self._layout.addWidget(self.btn_settings)
+
+    def _add_sep(self) -> None:
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet("color: #313244;")
+        self._layout.addWidget(line)
+
+    def _add_section(self, title: str, value: str) -> QLabel:
+        t = QLabel(title)
+        t.setStyleSheet("color: #585b70; font-size: 11px; padding: 0;")
+        self._layout.addWidget(t)
+        v = QLabel(value)
+        v.setStyleSheet("color: #cdd6f4; font-size: 13px; padding: 0 0 2px 0;")
+        v.setWordWrap(True)
+        self._layout.addWidget(v)
+        self._layout.addSpacing(10)
+        return v
+
+    def set_devices(self, devices: list[str]) -> None:
+        self.device_combo.blockSignals(True)
+        self.device_combo.clear()
+        for d in devices:
+            self.device_combo.addItem(d)
+        self.device_combo.blockSignals(False)
+        self.btn_start.setEnabled(len(devices) > 0)
+
+    def update_info(self, info: dict) -> None:
+        brand = info.get("brand", "")
+        model = info.get("model", "")
+        device = info.get("device", "")
+        display_name = f"{brand} {model}".strip()
+        if device and device != model:
+            display_name += f"\n({device})"
+        self._lbl_device.setText(display_name or "未知")
+        android = info.get("android", "?")
+        sdk = info.get("sdk", "")
+        self._lbl_android.setText(f"Android {android}" + (f" (API {sdk})" if sdk else ""))
+        self._lbl_soc.setText(info.get("soc", "") or info.get("platform", "") or "未知")
+        self._lbl_cpu.setText(info.get("cpu_text", "") or "未知")
+        self._lbl_gpu.setText(info.get("gpu", "") or "未知")
+        self._lbl_ram.setText(info.get("ram_text", "") or "未知")
+
+    def set_start_state(self, state: str) -> None:
+        """state: 'ready' / 'running' / 'paused' / 'stopped'"""
+        if state == "ready":
+            self.btn_start.setText("▶ 开始")
+            self.btn_start.setEnabled(True)
+            self.btn_stop.setEnabled(False)
+            self.btn_save.setText("⏺ 录制")
+            self.btn_save.setEnabled(False)
+            self.device_combo.setEnabled(True)
+            self.btn_refresh.setEnabled(True)
+        elif state == "running":
+            self.btn_start.setText("⏸ 暂停")
+            self.btn_start.setEnabled(True)
+            self.btn_stop.setEnabled(True)
+            self.btn_save.setEnabled(True)
+            self.device_combo.setEnabled(False)
+            self.btn_refresh.setEnabled(False)
+        elif state == "paused":
+            self.btn_start.setText("▶ 继续")
+            self.btn_start.setEnabled(True)
+            self.btn_stop.setEnabled(True)
+            self.btn_save.setEnabled(True)
+        elif state == "stopped":
+            self.btn_start.setText("▶ 开始")
+            self.btn_start.setEnabled(True)
+            self.btn_stop.setEnabled(False)
+            self.btn_save.setText("💾 保存数据")
+            self.btn_save.setEnabled(True)
+            self.device_combo.setEnabled(True)
+            self.btn_refresh.setEnabled(True)
+
+
+# ─── ChartPanel ─────────────────────
+
+class ChartPanel(QFrame):
+    """带居中标题的图表面板容器"""
+
+    def __init__(self, title: str, chart: QWidget, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("""
+            QFrame {
+                background: #1e1e2e;
+                border: 1px solid #313244;
+                border-radius: 8px;
+            }
+        """)
 
         layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setContentsMargins(0, 6, 0, 0)
+        layout.setSpacing(0)
 
-        self.title_label = QLabel("ADB FPS Monitor")
-        self.title_label.setStyleSheet("color: #89b4fa; font-size: 24px; font-weight: bold;")
-        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.title_label)
+        # 居中标题
+        title_label = QLabel(title)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_label.setStyleSheet("color: #cdd6f4; font-size: 13px; font-weight: bold; border: none;")
+        layout.addWidget(title_label)
 
-        self.device_label = QLabel("正在获取设备信息...")
-        self.device_label.setStyleSheet("color: #a6adc8; font-size: 14px; padding: 8px;")
-        self.device_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.device_label.setWordWrap(True)
-        layout.addWidget(self.device_label)
+        # 分隔线
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #313244; border: none;")
+        layout.addWidget(sep)
 
-        self.status = QLabel("正在连接设备...")
-        self.status.setStyleSheet("color: #a6adc8; font-size: 14px; padding: 20px;")
-        self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
+        # 图表
+        layout.addWidget(chart, stretch=1)
 
-        self.dots = QLabel("● ○ ○ ○")
-        self.dots.setStyleSheet("color: #89b4fa; font-size: 16px;")
-        self.dots.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.dots)
 
-        self.btn_cancel = QPushButton("取消")
-        self.btn_cancel.setFixedSize(100, 36)
-        self.btn_cancel.setStyleSheet("""
-            QPushButton { background: #45475a; color: #cdd6f4; font-size: 13px;
-                          border-radius: 6px; padding: 4px 16px; border: 1px solid #585b70; }
-            QPushButton:hover { background: #585b70; }
-        """)
-        self.btn_cancel.clicked.connect(self.cancelled.emit)
-        layout.addWidget(self.btn_cancel, alignment=Qt.AlignmentFlag.AlignCenter)
+# ─── SettingsPanel ──────────────────
 
-        self._dot_idx = 0
-        self._dot_timer = QTimer()
-        self._dot_timer.timeout.connect(self._animate_dots)
-        self._dot_timer.start(400)
+class SettingsPanel(QWidget):
+    """独立传感器选择面板 — 非模态浮动窗口，通过工具栏按钮 toggle"""
 
-    def _animate_dots(self) -> None:
-        patterns = ["● ○ ○ ○", "○ ● ○ ○", "○ ○ ● ○", "○ ○ ○ ●"]
-        self._dot_idx = (self._dot_idx + 1) % len(patterns)
-        self.dots.setText(patterns[self._dot_idx])
+    TEMP_IMPORTANT = {"CPU", "GPU", "表面", "电池"}
+    TEMP_GRID_COLS = 3  # 温度复选框网格列数
 
-    def update_device_info(self, info: str) -> None:
-        self.device_label.setText(info)
+    # 信号：(类型, 名称, 状态)  类型: "temp"/"freq"/"core_usage"/"core_freq"
+    checkbox_changed = pyqtSignal(str, str, int)
 
-    def update_status(self, msg: str) -> None:
-        self.status.setText(msg)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
+        self.setWindowTitle("设置")
+        self.setMinimumSize(360, 500)
+        self.resize(400, 700)
+        self.setStyleSheet("background: #181825; color: #cdd6f4;")
 
-    def finish(self) -> None:
-        self._dot_timer.stop()
-        self.hide()
-        self.deleteLater()
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(12, 12, 12, 12)
+        outer.setSpacing(0)
+
+        # 标题
+        self._add_label(outer, "⚙ 传感器选择",
+                        "color: #89b4fa; font-size: 14px; font-weight: bold; padding: 4px 0;")
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #313244;"); outer.addWidget(sep)
+        outer.addSpacing(8)
+
+        # 可滚动区域
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background: #181825; border: none; }")
+        scroll_widget = QWidget()
+        scroll_widget.setStyleSheet("background: #181825;")
+        self._layout = QVBoxLayout(scroll_widget)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(0)
+
+        # ─── 温度 ───
+        self._add_label(self._layout, "🌡 温度传感器",
+                        "color: #f38ba8; font-weight: bold; font-size: 13px; padding: 4px 0;")
+        self._show_all_temp = QCheckBox("显示所有已映射传感器")
+        self._show_all_temp.setChecked(False)
+        self._show_all_temp.setStyleSheet("color: #6c7086; font-size: 11px; padding: 2px 0 2px 16px;")
+        self._show_all_temp.stateChanged.connect(self._on_show_all_temp)
+        self._layout.addWidget(self._show_all_temp)
+        self._temp_grid = QGridLayout()
+        self._temp_grid.setSpacing(2)
+        self._layout.addLayout(self._temp_grid)
+        self._temp_checkboxes: dict[str, QCheckBox] = {}
+        self._temp_row = 0
+        self._temp_col = 0
+        self._layout.addSpacing(8)
+
+        # ─── CPU/GPU 频率 ───
+        self._add_label(self._layout, "⚡ CPU/GPU 频率",
+                        "color: #a6e3a1; font-weight: bold; font-size: 13px; padding: 8px 0 4px;")
+        self._freq_grid = QGridLayout()
+        self._freq_grid.setSpacing(2)
+        self._layout.addLayout(self._freq_grid)
+        self._freq_checkboxes: dict[str, QCheckBox] = {}
+        self._freq_row = 0
+        self._freq_col = 0
+        self._layout.addSpacing(8)
+
+        # ─── 单核 CPU 负载 ───
+        self._add_label(self._layout, "📊 单核 CPU 负载",
+                        "color: #f38ba8; font-weight: bold; font-size: 13px; padding: 8px 0 4px;")
+        self._core_usage_grid = QGridLayout()
+        self._core_usage_grid.setSpacing(2)
+        self._layout.addLayout(self._core_usage_grid)
+        self._layout.addSpacing(8)
+
+        # ─── 单核 CPU 频率 ───
+        self._add_label(self._layout, "📈 单核 CPU 频率",
+                        "color: #a6e3a1; font-weight: bold; font-size: 13px; padding: 8px 0 4px;")
+        self._core_freq_grid = QGridLayout()
+        self._core_freq_grid.setSpacing(2)
+        self._layout.addLayout(self._core_freq_grid)
+
+        self._layout.addStretch()
+        scroll.setWidget(scroll_widget)
+        outer.addWidget(scroll, stretch=1)
+
+    def _add_label(self, layout, text: str, style: str) -> None:
+        lbl = QLabel(text)
+        lbl.setStyleSheet(style)
+        layout.addWidget(lbl)
+
+    # ─── 温度复选框（3 列网格） ───
+
+    def add_temp_checkbox(self, name: str) -> QCheckBox:
+        if name in self._temp_checkboxes:
+            return self._temp_checkboxes[name]
+        cb = QCheckBox(name)
+        is_important = name in self.TEMP_IMPORTANT
+        cb.setChecked(is_important)
+        cb.setStyleSheet("color: #cdd6f4; font-size: 12px; padding: 2px 0 2px 8px;")
+        cb.stateChanged.connect(lambda state, n=name: self.checkbox_changed.emit("temp", n, state))
+        self._temp_checkboxes[name] = cb
+        self._temp_grid.addWidget(cb, self._temp_row, self._temp_col)
+        self._temp_col += 1
+        if self._temp_col >= self.TEMP_GRID_COLS:
+            self._temp_col = 0
+            self._temp_row += 1
+        if not is_important and not self._show_all_temp.isChecked():
+            cb.hide()
+        return cb
+
+    def _on_show_all_temp(self, state: int) -> None:
+        show_all = state == 2
+        for name, cb in self._temp_checkboxes.items():
+            if name in self.TEMP_IMPORTANT or show_all:
+                cb.show()
+            else:
+                cb.hide()
+
+    def is_temp_checked(self, name: str) -> bool:
+        return name in self._temp_checkboxes and self._temp_checkboxes[name].isChecked()
+
+    # ─── 频率复选框（3 列网格） ───
+
+    def add_freq_checkbox(self, name: str) -> QCheckBox:
+        if name in self._freq_checkboxes:
+            return self._freq_checkboxes[name]
+        cb = QCheckBox(name)
+        cb.setChecked(True)
+        cb.setStyleSheet("color: #cdd6f4; font-size: 12px; padding: 2px 0 2px 8px;")
+        cb.stateChanged.connect(lambda state, n=name: self.checkbox_changed.emit("freq", n, state))
+        self._freq_checkboxes[name] = cb
+        self._freq_grid.addWidget(cb, self._freq_row, self._freq_col)
+        self._freq_col += 1
+        if self._freq_col >= self.TEMP_GRID_COLS:
+            self._freq_col = 0
+            self._freq_row += 1
+        return cb
+
+    def is_freq_checked(self, name: str) -> bool:
+        return name in self._freq_checkboxes and self._freq_checkboxes[name].isChecked()
+
+    # ─── 单核复选框（CPU 负载 / CPU 频率） ───
+
+    def add_core_checkbox(self, name: str, checked: bool,
+                          kind: str, on_toggle) -> QCheckBox:
+        """kind: 'core_usage' 或 'core_freq'"""
+        cb = QCheckBox(name)
+        cb.setChecked(checked)
+        cb.setStyleSheet("color: #cdd6f4; font-size: 12px; padding: 2px 0 2px 8px;")
+        cb.stateChanged.connect(lambda state, n=name: on_toggle(n, state))
+        grid = self._core_usage_grid if kind == "core_usage" else self._core_freq_grid
+        count = grid.count()
+        row = count // self.TEMP_GRID_COLS
+        col = count % self.TEMP_GRID_COLS
+        grid.addWidget(cb, row, col)
+        return cb

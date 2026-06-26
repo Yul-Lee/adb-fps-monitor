@@ -5,11 +5,11 @@
 - SmartFPSState 6 态状态机
 - Source 层统一 read() -> FPSResult
 
-优先级（国产 ROM 兼容性排序）:
-1. SurfaceFlinger Buffer Frame Counter（最通用）
-2. TimeStats（Android 12+ 可靠设备上最优）
-3. SurfaceFlinger Latency（旧设备回退）
-4. GfxInfo（需要包名，最后回退）
+优先级:
+1. TimeStats
+2. SurfaceFlinger Latency
+3. GfxInfo
+4. SurfaceFlinger Buffer Frame Counter
 """
 
 import re
@@ -32,12 +32,19 @@ TIMESTATS_MIN_ELAPSED = 0.3  # TimeStats / GfxInfo 最小采样间隔（秒）
 # ═══════════════════════════════════════════
 
 class FPSState(Enum):
-    """Source 层 FPS 读取状态"""
-    READY = auto()           # 正常出帧
-    NO_FRAME = auto()        # 源正常但无新帧
+    """Source 层 FPS 读取状态
+
+    设计原则：
+    - READY / NO_FRAME 描述的是 Target 的状态（有帧 / 没帧）
+    - TARGET_INVALID 描述的是 Target 生命周期变化（原目标消失，需重新发现）
+    - TRANSIENT_FAIL / UNSUPPORTED 描述的是 Source 自身状态（临时故障 / 永久不可用）
+    """
+    READY = auto()           # Target 正常出帧
+    NO_FRAME = auto()        # Target 还在，只是没出帧
     WARMUP = auto()          # 预热中（再等等）
-    TRANSIENT_FAIL = auto()  # 临时失败（稍后重试）
-    UNSUPPORTED = auto()     # 不支持（拉黑）
+    TRANSIENT_FAIL = auto()  # Source 临时失败（稍后重试）
+    UNSUPPORTED = auto()     # Source 永久不可用（拉黑）
+    TARGET_INVALID = auto()  # Target 已失效（原目标消失，需重新发现）
 
 
 @dataclass
@@ -59,7 +66,7 @@ class SmartFPSState(Enum):
 
 # ═══════════════════════════════════════════
 # SurfaceFlinger Buffer Frame Counter
-# 优先级 1
+# 优先级 4（保底）
 # ═══════════════════════════════════════════
 
 class SFBuffFPS:
@@ -116,7 +123,7 @@ class SFBuffFPS:
 
 # ═══════════════════════════════════════════
 # TimeStats FPS
-# 优先级 2
+# 优先级 1（最准确）
 # ═══════════════════════════════════════════
 
 class TimeStatsFPS:
@@ -125,47 +132,54 @@ class TimeStatsFPS:
         self.adb = adb
         self.package = package
         self._enabled = False
-        self._prev_frames = None
-        self._prev_time = None
-        self._prev_layer = None
+        self._prev_entries: dict[str, int] = {}
+        self._prev_global_frames: int | None = None
+        self._prev_time: float | None = None
+        self._target_layer: str | None = None  # 当前锁定的 layer 名称
 
     def _enable(self):
         self.adb.run_shell("dumpsys SurfaceFlinger --timestats -enable", timeout=3)
         self._enabled = True
 
     def _parse_output(self, out):
-        """解析 timestats 输出，返回 (layer_name, total_frames, avg_fps)
+        """解析 timestats 输出，返回 (entries, global_frames)
 
-        使用 current dict 按块收集字段，每遇到 layerName 则 flush，
-        避免字段错位（如 averageFPS 缺失导致残留值泄漏到下一个 block）。
+        entries: [(layer_name, total_frames, avg_fps), ...] 按 totalFrames 降序
+        global_frames: Legacy 全局 totalFrames（系统级帧计数器，实时更新）
         """
         pkg = self.package or ""
         entries = []
-        current = {}  # 当前 block 的字段
+        global_frames = None
+        current = {}
+        seen_layer = False
+
+        def _flush():
+            if not seen_layer:
+                return
+            name = current.get("name", "")
+            frames = current.get("frames")
+            if frames is not None and "SurfaceView" in name:
+                if (not pkg) or (pkg in name):
+                    entries.append((name, frames, current.get("fps")))
 
         for line in out.split("\n"):
             line = line.strip()
-            if line.startswith("totalFrames"):
+            if "layerName" in line:
+                _flush()
+                current = {"name": line.split("=", 1)[1].strip() if "=" in line else ""}
+                seen_layer = True
+            elif line.startswith("totalFrames"):
                 match = re.search(r"(\d+)", line)
                 if match:
-                    current["frames"] = int(match.group(1))
-            elif line.startswith("averageFPS"):
-                match = re.search(r"([\d.]+)", line)
-                if match:
-                    current["fps"] = float(match.group(1))
-            elif "layerName" in line:
-                name = line.split("=", 1)[1].strip() if "=" in line else ""
-                frames = current.get("frames")
-                fps = current.get("fps")
-                if frames is not None and "SurfaceView" in name:
-                    if (not pkg) or (pkg in name):
-                        entries.append((name, frames, fps))
-                current = {}  # 重置，开始下一个 block
+                    val = int(match.group(1))
+                    current["frames"] = val
+                    if not seen_layer:
+                        global_frames = val
 
-        if entries:
-            best = max(entries, key=lambda e: e[1])
-            return best[0], best[1], best[2]
-        return None, None, None
+        _flush()
+
+        entries.sort(key=lambda e: e[1], reverse=True)
+        return entries, global_frames
 
     def read(self) -> FPSResult:
         if not self._enabled:
@@ -178,41 +192,59 @@ class TimeStatsFPS:
         if rc != 0 or not out:
             return FPSResult(FPSState.TRANSIENT_FAIL)
 
-        layer, total_frames, avg_fps = self._parse_output(out)
+        entries, global_frames = self._parse_output(out)
 
-        if total_frames is None:
+        if not entries and global_frames is None:
             return FPSResult(FPSState.TRANSIENT_FAIL)
 
         now = time.monotonic()
 
-        if self._prev_layer and layer and self._prev_layer != layer:
-            self._prev_frames = None
-        if layer:
-            self._prev_layer = layer
-
-        if self._prev_frames is None:
-            self._prev_frames = total_frames
+        # 首次读取：缓存
+        if self._prev_global_frames is None:
+            self._prev_entries = {name: frames for name, frames, _ in entries}
+            self._prev_global_frames = global_frames
             self._prev_time = now
-            if avg_fps and avg_fps > 0:
-                return FPSResult(FPSState.READY, round(avg_fps, 1))
             return FPSResult(FPSState.WARMUP)
 
         elapsed = now - self._prev_time
         if elapsed < TIMESTATS_MIN_ELAPSED:
             return FPSResult(FPSState.WARMUP)
 
-        delta = total_frames - self._prev_frames
-        self._prev_frames = total_frames
+        # 检查 target layer 是否仍然存在
+        entry_names = {name for name, _, _ in entries}
+        if self._target_layer and self._target_layer not in entry_names and entries:
+            self._target_layer = None
+            return FPSResult(FPSState.TARGET_INVALID)
+
+        # per-layer delta（找活跃 layer）
+        best_fps = 0.0
+        best_name = None
+        for name, frames, _ in entries:
+            prev = self._prev_entries.get(name)
+            if prev is not None:
+                delta = frames - prev
+                if delta > 0:
+                    fps = delta / elapsed
+                    if fps > best_fps:
+                        best_fps = fps
+                        best_name = name
+
+        # 回退：全局帧计数器 delta
+        if best_fps == 0 and global_frames is not None and self._prev_global_frames is not None:
+            delta = global_frames - self._prev_global_frames
+            if delta > 0:
+                best_fps = delta / elapsed
+
+        # 更新缓存
+        self._prev_entries = {name: frames for name, frames, _ in entries}
+        self._prev_global_frames = global_frames
         self._prev_time = now
 
-        if delta < 0:
-            return FPSResult(FPSState.TRANSIENT_FAIL)
-
-        if delta == 0:
-            return FPSResult(FPSState.NO_FRAME, 0.0)
-
-        fps = delta / elapsed
-        return FPSResult(FPSState.READY, round(min(max(fps, 0), MAX_FPS), 1))
+        if best_fps > 0:
+            if best_name:
+                self._target_layer = best_name
+            return FPSResult(FPSState.READY, round(min(best_fps, MAX_FPS), 1))
+        return FPSResult(FPSState.NO_FRAME, 0.0)
 
     def cleanup(self):
         if self._enabled:
@@ -223,7 +255,7 @@ class TimeStatsFPS:
 
 # ═══════════════════════════════════════════
 # SurfaceFlinger Latency FPS
-# 优先级 3
+# 优先级 2（也很准确）
 # ═══════════════════════════════════════════
 
 class SFLatencyFPS:
@@ -237,6 +269,10 @@ class SFLatencyFPS:
     def read(self) -> FPSResult:
         window = self._find_surface_view()
         if not window:
+            # 之前有缓存窗口但现在找不到 → 目标失效
+            if self._cached_window:
+                self._cached_window = None
+                return FPSResult(FPSState.TARGET_INVALID)
             return FPSResult(FPSState.WARMUP)
         safe_win = window.replace("'", "'\\''")
         out, rc = self.adb.run_shell_retry(
@@ -339,7 +375,7 @@ class SFLatencyFPS:
 
 # ═══════════════════════════════════════════
 # GfxInfo FPS
-# 优先级 4
+# 优先级 3（有数据时为真正 App FPS）
 # ═══════════════════════════════════════════
 
 class GfxInfoFPS:
@@ -437,11 +473,11 @@ class SmartFPSSource:
             ├─ pause_source READY/NO_FRAME → ACTIVE (优先恢复)
             └─ else ────→ DISCOVERING (重试)
 
-    优先级顺序（国产 ROM 兼容性）:
-    1. SFBuffFPS (SurfaceFlinger buffer frame counter)
-    2. TimeStatsFPS (timestats -dump)
-    3. SFLatencyFPS (SurfaceFlinger --latency)
-    4. GfxInfoFPS (dumpsys gfxinfo, 需要包名)
+    优先级顺序:
+    1. TimeStatsFPS (最准确)
+    2. SFLatencyFPS (也很准确)
+    3. GfxInfoFPS (有数据时为真正 App FPS)
+    4. SFBuffFPS (最后保底)
     """
     # 配置常量
     FAIL_THRESHOLD = 10            # ACTIVE 中连续 TRANSIENT_FAIL 多少次 → RECOVERING
@@ -449,14 +485,13 @@ class SmartFPSSource:
     RECOVERING_TIMEOUT = 3.0       # RECOVERING 阶段超时秒数
     RECOVERING_MAX_ROUNDS = 2      # RECOVERING 最多重试几轮
     PAUSED_RETRY_INTERVAL = 3.0    # PAUSED 状态重试间隔
-    SOURCE_BLACKLIST_THRESHOLD = 20  # 探测失败多少次拉黑
 
     # Per-source PENDING 超时（type-based，重构安全）
     PENDING_TIMEOUT: dict[type, float] = {
+        TimeStatsFPS: 32.0,
+        SFLatencyFPS: 1.2,
+        GfxInfoFPS: 1.5,
         SFBuffFPS: 1.0,
-        TimeStatsFPS: 2.0,
-        SFLatencyFPS: 1.5,
-        GfxInfoFPS: 3.0,
     }
     PENDING_TIMEOUT_DEFAULT = 2.0
 
@@ -466,11 +501,11 @@ class SmartFPSSource:
 
         # Source 列表（按优先级排序）
         self._sources: list[tuple[str, object]] = []
-        self._sources.append(("sf_buffer", SFBuffFPS(adb)))
         self._sources.append(("timestats", TimeStatsFPS(adb, package)))
         self._sources.append(("sf_latency", SFLatencyFPS(adb, package)))
         if package:
             self._sources.append(("gfxinfo", GfxInfoFPS(adb, package)))
+        self._sources.append(("sf_buffer", SFBuffFPS(adb)))
 
         # 状态机
         self._sm_state = SmartFPSState.UNINITIALIZED
@@ -534,6 +569,11 @@ class SmartFPSSource:
         self._sm_state = new_state
 
     # ─── 公开接口：保持 float | None 兼容 ───
+
+    @property
+    def active_source_name(self) -> str | None:
+        """当前激活的 FPS 数据源名称（sf_buffer / timestats / sf_latency / gfxinfo）"""
+        return self._active_name
 
     def read_fps(self) -> float | None:
         """对外接口，返回 float（正常）或 None（无数据），内部驱动状态机"""
@@ -685,6 +725,15 @@ class SmartFPSSource:
             # 是否放弃由 PENDING 超时机制统一决定。
             return None
 
+        elif result.state == FPSState.TARGET_INVALID:
+            logging.info("FPS 数据源 %s 目标失效，跳过", self._pending_name)
+            self._set_state(SmartFPSState.DISCOVERING,
+                            f"{self._pending_name} target invalid")
+            self._pending_source = None
+            self._pending_name = None
+            self._discover_index += 1
+            return self._handle_discovering()
+
         elif result.state == FPSState.UNSUPPORTED:
             self._blacklist.add(self._pending_name)
             logging.info("FPS 数据源 %s 不支持，拉黑", self._pending_name)
@@ -756,8 +805,15 @@ class SmartFPSSource:
                 logging.info("FPS 数据源 %s 连续失败，进入恢复", self._active_name)
             return None
 
+        elif result.state == FPSState.TARGET_INVALID:
+            # 目标已失效（layer 消失），重新发现，不拉黑
+            logging.info("FPS 数据源 %s 目标失效，重新发现", self._active_name)
+            self._consecutive_failures = 0
+            self._no_data_count = 0
+            return self._switch_source()
+
         elif result.state == FPSState.UNSUPPORTED:
-            # 源明确不可用，立即切源
+            # 源明确不可用，立即切源并拉黑
             if self._active_name == self._sticky_source_name:
                 self._sticky_source_name = None  # 粘性源不可用，清除
             self._blacklist.add(self._active_name)
@@ -815,7 +871,13 @@ class SmartFPSSource:
             logging.info("FPS 数据源 %s 恢复成功（无新帧）", self._active_name)
             return result.fps
 
-        # WARMUP / TRANSIENT_FAIL / UNSUPPORTED：继续等
+        # WARMUP / TRANSIENT_FAIL / UNSUPPORTED / TARGET_INVALID：继续等或放弃
+        if result.state == FPSState.TARGET_INVALID:
+            logging.info("FPS 数据源 %s 目标失效，放弃恢复", self._recovering_name)
+            self._recovering_source = None
+            self._recovering_name = None
+            return self._switch_source()
+
         if result.state == FPSState.UNSUPPORTED:
             self._blacklist.add(self._recovering_name)
             logging.info("FPS 数据源 %s 变为不支持，切源", self._recovering_name)

@@ -3,16 +3,15 @@
 ADB FPS Monitor - 本地图形化实时监控 FPS/温度/CPU频率
 依赖: pip install pyqtgraph PyQt6
 
-使用: python adb_fps_monitor.py [-s 设备] [-i 间隔] [--no-temp] [--no-freq]
+使用: python adb_fps_monitor.py [-s 设备] [-p 包名] [-i 间隔] [--no-temp] [--no-freq] [--debug]
 """
 
 import argparse
 import sys
 import logging
 
-from core.adb import ADBRunner
-from core.fps_sources import SmartFPSSource
-from core.sensors import TemperatureReader, FreqReader, PowerReader, MemReader
+from PyQt6.QtWidgets import QApplication
+from gui.main_window import MainWindow
 
 
 def main() -> None:
@@ -33,31 +32,14 @@ def main() -> None:
     else:
         logging.basicConfig(level=logging.WARNING)
 
-    adb = ADBRunner(serial=args.serial)
-    devices = adb.check_device()
-    if not devices:
-        print("错误: 未检测到 ADB 设备")
-        return
-    if not adb.select_device(devices):
-        return
-
-    pkg = args.package or adb.get_foreground_package()
-    if pkg:
-        print(f"前台应用: {pkg}")
-
-    fps_src = SmartFPSSource(adb, package=pkg)
-    temp_reader = TemperatureReader(adb) if not args.no_temp else None
-    freq_reader = FreqReader(adb) if not args.no_freq else None
-    power_reader = PowerReader(adb)
-    mem_reader = MemReader(adb, package=pkg)
-
-    # 延迟导入 PyQt6 —— 避免非 GUI 场景下加载图形库
-    from PyQt6.QtWidgets import QApplication
-    from gui.main_window import MainWindow
-
     app = QApplication(sys.argv)
-    window = MainWindow(adb, fps_src, temp_reader, freq_reader,
-                        power_reader, mem_reader, args.interval, pkg)
+    window = MainWindow(
+        serial=args.serial,
+        package=args.package,
+        interval=args.interval,
+        no_temp=args.no_temp,
+        no_freq=args.no_freq,
+    )
     window.show()
     sys.exit(app.exec())
 

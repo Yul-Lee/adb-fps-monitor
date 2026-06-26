@@ -106,6 +106,7 @@ class TemperatureReader:
     def __init__(self, adb):
         self.adb = adb
         self._user_map = self._load_temp_map()
+        self._cached_temps: dict[str, float] = {}  # batch_prime 填充
 
     @staticmethod
     def _load_temp_map():
@@ -137,8 +138,15 @@ class TemperatureReader:
                 return alias
         return None
 
+    def prime(self) -> None:
+        self.read()
+
     def read(self) -> dict[str, float]:
-        """读取温度，优先 sysfs，回退到 thermalservice，最后 battery"""
+        """读取温度，优先缓存（batch_prime），然后 sysfs，回退 thermalservice，最后 battery"""
+        if self._cached_temps:
+            result = self._cached_temps
+            self._cached_temps = {}
+            return result
         result = self._read_from_sysfs()
         if result:
             return result
@@ -228,6 +236,9 @@ class PowerReader:
         self._last_result = {"电压(V)": 0, "电量(%)": 0}
         self._bs_cached_ma: float | None = None  # batterystats 缓存的电流值
         self._bs_last_update: float = 0.0         # 上次查询 batterystats 的时间
+
+    def prime(self) -> None:
+        self.read()
 
     def read(self) -> dict:
         # 优先 sysfs 文件读取（轻量快速）
@@ -447,6 +458,9 @@ class MemReader:
         self.adb = adb
         self.package = package or ""
 
+    def prime(self) -> None:
+        self.read()
+
     def read(self) -> dict[str, int]:
         result = {}
         meminfo_out = None
@@ -621,8 +635,8 @@ class FreqReader:
                 f"cat /sys/devices/system/cpu/cpufreq/policy{pid}/related_cpus 2>/dev/null"
                 for pid in pids
             )
-            out, r = self.adb.run_shell(cmds, timeout=5)
-            if r == 0 and out:
+            out, _ = self.adb.run_shell(cmds, timeout=5)
+            if out:
                 blocks = re.split(r"__P(\d+)", out)
                 # blocks[0] 为空, blocks[1]=pid, blocks[2]=content, ...
                 for i in range(1, len(blocks) - 1, 2):
@@ -676,6 +690,10 @@ class FreqReader:
                             break
 
         self._probed = True
+
+    def prime(self) -> None:
+        """预热：提前读取一次，建立 CPU 负载基准"""
+        self.read()
 
     def read(self) -> dict[str, float]:
         if not self._probed:
@@ -760,8 +778,8 @@ class FreqReader:
             f"cat /sys/devices/system/cpu/cpu{n}/cpufreq/scaling_cur_freq 2>/dev/null"
             for n in self._per_core_freq_cache
         )
-        out, rc = self.adb.run_shell_retry(cmds, timeout=5, retries=1)
-        if rc == 0 and out:
+        out, _ = self.adb.run_shell_retry(cmds, timeout=5, retries=1)
+        if out:
             lines = [l.strip() for l in out.strip().split("\n") if l.strip()]
             for i, core_id in enumerate(self._per_core_freq_cache):
                 if i < len(lines) and lines[i].isdigit():
@@ -832,6 +850,9 @@ class NetReader:
         self._prev_tx = None
         self._prev_time = None
 
+    def prime(self) -> None:
+        self.read()
+
     def read(self) -> dict[str, float]:
         out, rc = self.adb.run_shell(
             "cat /proc/net/dev", timeout=3
@@ -882,3 +903,147 @@ class NetReader:
             "下行(KB/s)": round(max(rx_rate, 0), 1),
             "上行(KB/s)": round(max(tx_rate, 0), 1),
         }
+
+
+# ─── 批量预热 ──────────────────────────
+
+def batch_prime(adb, temp_reader=None, freq_reader=None,
+                power_reader=None, net_reader=None) -> None:
+    """一次 ADB 调用预读所有传感器数据，建立基准 + 预热连接。
+
+    比逐个 reader.prime() 快 4-5 倍（1 次 subprocess vs 5 次）。
+    使用标签分隔各段，避免索引错位。
+    """
+    # 组合所有读取命令
+    parts = []
+    parts.append(
+        "echo __TEMP__; "
+        "for z in /sys/class/thermal/thermal_zone*; do "
+        "read t < $z/type 2>/dev/null && read v < $z/temp 2>/dev/null "
+        "&& echo \"$t $v\"; done"
+    )
+    parts.append(
+        "echo __POWER__; "
+        "cat /sys/class/power_supply/battery/voltage_now 2>/dev/null; "
+        "cat /sys/class/power_supply/battery/capacity 2>/dev/null; "
+        "cat /sys/class/power_supply/battery/status 2>/dev/null; "
+        "cat /sys/class/power_supply/battery/charge_counter 2>/dev/null; "
+        "cat /sys/class/power_supply/battery/current_now 2>/dev/null"
+    )
+    if freq_reader:
+        parts.append(
+            "echo __FREQ__; cat /proc/stat"
+        )
+    parts.append(
+        "echo __NET__; cat /proc/net/dev"
+    )
+
+    combined = "; ".join(parts)
+    out, _ = adb.run_shell(combined, timeout=10)
+    if not out:
+        return
+
+    # 按标签分段
+    sections: dict[str, str] = {}
+    current_label = ""
+    current_lines: list[str] = []
+    for line in out.split("\n"):
+        line = line.strip()
+        if line.startswith("__") and line.endswith("__"):
+            if current_label:
+                sections[current_label] = "\n".join(current_lines)
+            current_label = line.strip("_").lower()
+            current_lines = []
+        else:
+            current_lines.append(line)
+    if current_label:
+        sections[current_label] = "\n".join(current_lines)
+
+    # 分发给各 reader
+    if temp_reader and "temp" in sections:
+        _batch_prime_temp(temp_reader, sections["temp"])
+    if power_reader and "power" in sections:
+        _batch_prime_power(power_reader, sections["power"])
+    if freq_reader and "freq" in sections:
+        _batch_prime_freq(freq_reader, sections["freq"])
+    if net_reader and "net" in sections:
+        _batch_prime_net(net_reader, sections["net"])
+
+
+def _batch_prime_temp(reader, raw: str) -> None:
+    """解析温度数据并缓存到 reader"""
+    temps = {}
+    for line in raw.strip().split("\n"):
+        parts = line.strip().split()
+        if len(parts) >= 2:
+            zone_type = parts[0]
+            try:
+                val = int(parts[1])
+                if val > 500:
+                    val = val / 1000.0
+                if -40 < val < 200:
+                    name = reader._map_name(zone_type)
+                    if name and name not in temps:
+                        temps[name] = round(val, 1)
+            except (ValueError, IndexError):
+                pass
+    if temps:
+        reader._cached_temps = temps
+
+
+def _batch_prime_freq(reader, raw: str) -> None:
+    """解析 /proc/stat 建立 CPU 负载基准"""
+    for line in raw.strip().split("\n"):
+        parts = line.strip().split()
+        if parts and parts[0] == "cpu":
+            try:
+                values = [int(x) for x in parts[1:]]
+                idle = values[3] + (values[4] if len(values) > 4 else 0)
+                total = sum(values)
+                reader._prev_cpu_total = total
+                reader._prev_cpu_idle = idle
+            except (ValueError, IndexError):
+                pass
+            break
+
+
+def _batch_prime_power(reader, raw: str) -> None:
+    """解析功耗数据并建立基准"""
+    lines = [l.strip() for l in raw.strip().split("\n") if l.strip()]
+    if len(lines) < 3:
+        return
+    try:
+        voltage_uv = int(lines[0])
+        status_str = lines[2]
+        charge_uah = int(lines[3]) if len(lines) > 3 and lines[3].lstrip('-').isdigit() else None
+    except (ValueError, IndexError):
+        return
+
+    is_charging = status_str.lower() in ("charging", "full")
+    if not is_charging and charge_uah is not None:
+        reader._samples.append((time.time(), charge_uah, voltage_uv))
+
+
+def _batch_prime_net(reader, raw: str) -> None:
+    """解析网络数据并建立基准"""
+    total_rx = 0
+    total_tx = 0
+    for line in raw.strip().split("\n"):
+        line = line.strip()
+        if ":" not in line:
+            continue
+        iface, data = line.split(":", 1)
+        iface = iface.strip()
+        if iface == "lo":
+            continue
+        parts = data.split()
+        if len(parts) >= 10:
+            try:
+                total_rx += int(parts[0])
+                total_tx += int(parts[8])
+            except ValueError:
+                pass
+    if total_rx > 0 or total_tx > 0:
+        reader._prev_rx = total_rx
+        reader._prev_tx = total_tx
+        reader._prev_time = time.time()

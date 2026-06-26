@@ -486,7 +486,7 @@ class MainWindow(QMainWindow):
         self.mem_reader = MemReader(self.adb, package=self.package)
         self.net_reader = NetReader(self.adb)
 
-        # 批量 prime：一次 ADB 调用预读所有传感器，预热连接 + 建立基准
+        # 批量 prime：一次 ADB 调用预读所有传感器，预热连接 + 缓存首次读数
         batch_prime(self.adb,
                     temp_reader=self.temp_reader,
                     freq_reader=self.freq_reader,
@@ -568,10 +568,6 @@ class MainWindow(QMainWindow):
 
     def _on_worker_ready(self) -> None:
         self.ready_count += 1
-        # 非 FPS Worker 就绪后立即回放 warmup 数据，不等 FPS 探测完成
-        w = self.sender()
-        if w and not isinstance(w, FPSWorker):
-            self._replay_single_warmup(w)
         if self.ready_count >= self.total_workers:
             self._on_all_workers_ready()
 
@@ -597,53 +593,51 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(getattr(self, '_original_title', "ADB FPS Monitor"))
 
     # ═══════════════════════════════════════════
-    # 预热数据回放
+    # 预热数据回放（monitor_started=True 后调用）
     # ═══════════════════════════════════════════
 
-    def _replay_single_warmup(self, w) -> None:
-        """单个 Worker 就绪后立即回放 warmup 数据"""
-        data = w.get_warmup_data()
-        if data is None:
-            return
-        if w is getattr(self, 'cpu_worker', None):
-            self._on_freq(0.0, data)
-            self._sync_freq_data(0.0)
-        elif w is getattr(self, 'temp_worker', None):
-            self._on_temp(0.0, data)
-            self._sync_temp_data(0.0)
-        elif w is getattr(self, 'power_worker', None):
-            self._on_power(0.0, data)
-        elif w is getattr(self, 'mem_worker', None):
-            self._on_mem(0.0, data)
-        elif w is getattr(self, 'net_worker', None):
-            self._on_net(0.0, data)
-
     def _replay_warmup_data(self) -> None:
-        """回放 FPS warmup 数据（非 FPS 数据已在 _replay_single_warmup 中回放）"""
+        """回放所有 Worker 的 warmup 数据"""
         for w in self.workers:
-            if not isinstance(w, FPSWorker):
-                continue
             data = w.get_warmup_data()
             if data is None:
                 continue
-            fps = data
-            avg = round(fps, 1)
-            _append_limit(self.fps_x, 0.0, self.max_points)
-            _append_limit(self.fps_y, fps, self.max_points)
-            self.fps_chart.update_data(self.fps_x, self.fps_y, avg,
-                                       self._jank_bar_x, self._jank_bar_y)
-            self.card_fps.update_value(str(fps))
-            self.card_avg.update_value(str(avg))
-            self.card_min.update_value(str(fps))
-            self.card_max.update_value(str(fps))
-            self.card_count.update_value("1")
-            if fps > 0.1:
-                ft_ms = round(1000.0 / fps, 1)
-                _append_limit(self.ft_x, 0.0, self.max_points)
-                _append_limit(self.ft_y, ft_ms, self.max_points)
-                self.ft_curve.setData(self.ft_x, self.ft_y)
-                self.card_1low.update_value(str(fps))
-                self.card_01low.update_value(str(fps))
+
+            if isinstance(w, FPSWorker):
+                self._replay_fps_warmup(data)
+            elif w is getattr(self, 'cpu_worker', None):
+                self._on_freq(0.0, data)
+                self._sync_freq_data(0.0)
+                self._sync_core_usage(0.0, data)
+                self._sync_core_freq(0.0, data)
+            elif w is getattr(self, 'temp_worker', None):
+                self._on_temp(0.0, data)
+                self._sync_temp_data(0.0)
+            elif w is getattr(self, 'power_worker', None):
+                self._on_power(0.0, data)
+            elif w is getattr(self, 'mem_worker', None):
+                self._on_mem(0.0, data)
+            elif w is getattr(self, 'net_worker', None):
+                self._on_net(0.0, data)
+
+    def _replay_fps_warmup(self, fps: float) -> None:
+        avg = round(fps, 1)
+        _append_limit(self.fps_x, 0.0, self.max_points)
+        _append_limit(self.fps_y, fps, self.max_points)
+        self.fps_chart.update_data(self.fps_x, self.fps_y, avg,
+                                   self._jank_bar_x, self._jank_bar_y)
+        self.card_fps.update_value(str(fps))
+        self.card_avg.update_value(str(avg))
+        self.card_min.update_value(str(fps))
+        self.card_max.update_value(str(fps))
+        self.card_count.update_value("1")
+        if fps > 0.1:
+            ft_ms = round(1000.0 / fps, 1)
+            _append_limit(self.ft_x, 0.0, self.max_points)
+            _append_limit(self.ft_y, ft_ms, self.max_points)
+            self.ft_curve.setData(self.ft_x, self.ft_y)
+            self.card_1low.update_value(str(fps))
+            self.card_01low.update_value(str(fps))
 
     # ═══════════════════════════════════════════
     # Checkbox / Toggle

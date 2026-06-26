@@ -106,7 +106,7 @@ class TemperatureReader:
     def __init__(self, adb):
         self.adb = adb
         self._user_map = self._load_temp_map()
-        self._cached_temps: dict[str, float] = {}  # batch_prime 填充
+        self._warmup_cache: dict[str, float] | None = None
 
     @staticmethod
     def _load_temp_map():
@@ -143,9 +143,9 @@ class TemperatureReader:
 
     def read(self) -> dict[str, float]:
         """读取温度，优先缓存（batch_prime），然后 sysfs，回退 thermalservice，最后 battery"""
-        if self._cached_temps:
-            result = self._cached_temps
-            self._cached_temps = {}
+        if self._warmup_cache:
+            result = self._warmup_cache
+            self._warmup_cache = None
             return result
         result = self._read_from_sysfs()
         if result:
@@ -236,11 +236,16 @@ class PowerReader:
         self._last_result = {"电压(V)": 0, "电量(%)": 0}
         self._bs_cached_ma: float | None = None  # batterystats 缓存的电流值
         self._bs_last_update: float = 0.0         # 上次查询 batterystats 的时间
+        self._warmup_cache: dict | None = None
 
     def prime(self) -> None:
         self.read()
 
     def read(self) -> dict:
+        if self._warmup_cache:
+            result = self._warmup_cache
+            self._warmup_cache = None
+            return result
         # 优先 sysfs 文件读取（轻量快速）
         result = self._read_from_sysfs()
         if result is not None:
@@ -457,11 +462,16 @@ class MemReader:
     def __init__(self, adb, package=None):
         self.adb = adb
         self.package = package or ""
+        self._warmup_cache: dict[str, int] | None = None
 
     def prime(self) -> None:
         self.read()
 
     def read(self) -> dict[str, int]:
+        if self._warmup_cache:
+            result = self._warmup_cache
+            self._warmup_cache = None
+            return result
         result = {}
         meminfo_out = None
 
@@ -538,6 +548,7 @@ class FreqReader:
         self._prev_cpu_total = None
         self._prev_cpu_idle = None
         self._prev_per_core = None  # [(core_id, total, idle), ...]
+        self._warmup_cache: dict[str, float] | None = None
         self._per_core_freq_cache = None  # Reset: uses re.finditer to avoid duplicate core IDs
 
     # ─── 平台定向路径表 ───
@@ -696,6 +707,10 @@ class FreqReader:
         self.read()
 
     def read(self) -> dict[str, float]:
+        if self._warmup_cache:
+            result = self._warmup_cache
+            self._warmup_cache = None
+            return result
         if not self._probed:
             self._probe()
 
@@ -909,19 +924,20 @@ class NetReader:
 
 def batch_prime(adb, temp_reader=None, freq_reader=None,
                 power_reader=None, net_reader=None) -> None:
-    """一次 ADB 调用预读所有传感器数据，建立基准 + 预热连接。
+    """一次 ADB 调用预读所有传感器数据，建立基准 + 预热连接 + 缓存首次读数。
 
-    比逐个 reader.prime() 快 4-5 倍（1 次 subprocess vs 5 次）。
-    使用标签分隔各段，避免索引错位。
+    每个 Reader 的 _warmup_cache 被填充后，首次 read() 直接返回缓存，
+    无需再发 ADB 调用，消除 Worker 首次 poll 的 ~600ms 延迟。
     """
-    # 组合所有读取命令
     parts = []
+    # 温度
     parts.append(
         "echo __TEMP__; "
         "for z in /sys/class/thermal/thermal_zone*; do "
         "read t < $z/type 2>/dev/null && read v < $z/temp 2>/dev/null "
         "&& echo \"$t $v\"; done"
     )
+    # 功耗
     parts.append(
         "echo __POWER__; "
         "cat /sys/class/power_supply/battery/voltage_now 2>/dev/null; "
@@ -930,13 +946,18 @@ def batch_prime(adb, temp_reader=None, freq_reader=None,
         "cat /sys/class/power_supply/battery/charge_counter 2>/dev/null; "
         "cat /sys/class/power_supply/battery/current_now 2>/dev/null"
     )
+    # CPU 负载基准 + policy 探测 + 集群频率
     if freq_reader:
         parts.append(
-            "echo __FREQ__; cat /proc/stat"
+            "echo __FREQ__; cat /proc/stat; "
+            "ls /sys/devices/system/cpu/cpufreq/; "
+            "for p in /sys/devices/system/cpu/cpufreq/policy*/; do "
+            "echo __P; cat ${p}scaling_cur_freq 2>/dev/null; "
+            "cat ${p}related_cpus 2>/dev/null; done"
         )
-    parts.append(
-        "echo __NET__; cat /proc/net/dev"
-    )
+    # 内存（dumpsys meminfo 太慢 ~3s，不放在这里，MemReader 自己读）
+    # 网络
+    parts.append("echo __NET__; cat /proc/net/dev")
 
     combined = "; ".join(parts)
     out, _ = adb.run_shell(combined, timeout=10)
@@ -971,7 +992,7 @@ def batch_prime(adb, temp_reader=None, freq_reader=None,
 
 
 def _batch_prime_temp(reader, raw: str) -> None:
-    """解析温度数据并缓存到 reader"""
+    """解析温度数据，设置 _warmup_cache"""
     temps = {}
     for line in raw.strip().split("\n"):
         parts = line.strip().split()
@@ -988,14 +1009,18 @@ def _batch_prime_temp(reader, raw: str) -> None:
             except (ValueError, IndexError):
                 pass
     if temps:
-        reader._cached_temps = temps
+        reader._warmup_cache = temps
 
 
 def _batch_prime_freq(reader, raw: str) -> None:
-    """解析 /proc/stat 建立 CPU 负载基准"""
+    """解析 /proc/stat，建立 CPU 负载基准（含单核）+ 缓存集群频率"""
+    freq_result = {}
+    per_core = []
     for line in raw.strip().split("\n"):
         parts = line.strip().split()
-        if parts and parts[0] == "cpu":
+        if not parts:
+            continue
+        if parts[0] == "cpu" and len(parts) >= 5:
             try:
                 values = [int(x) for x in parts[1:]]
                 idle = values[3] + (values[4] if len(values) > 4 else 0)
@@ -1004,28 +1029,70 @@ def _batch_prime_freq(reader, raw: str) -> None:
                 reader._prev_cpu_idle = idle
             except (ValueError, IndexError):
                 pass
-            break
+        elif parts[0].startswith("cpu") and parts[0][3:].isdigit() and len(parts) >= 5:
+            try:
+                core_id = int(parts[0][3:])
+                values = [int(x) for x in parts[1:]]
+                idle = values[3] + (values[4] if len(values) > 4 else 0)
+                total = sum(values)
+                per_core.append((core_id, total, idle))
+            except (ValueError, IndexError):
+                pass
+    if per_core:
+        reader._prev_per_core = per_core
+    # 解析 policy 探测数据（__P 分隔）
+    sections = raw.split("__P")
+    for sec in sections[1:]:  # 跳过 /proc/stat 部分
+        lines = [l.strip() for l in sec.strip().split("\n") if l.strip()]
+        if len(lines) >= 2:
+            freq_str = lines[0]
+            related = lines[1]
+            if freq_str.isdigit():
+                freq_mhz = int(freq_str) // 1000
+                ids = related.split()
+                rng = f"{ids[0]}-{ids[-1]}" if len(ids) > 1 else (ids[0] if ids else "")
+                label = f"CPU({rng})" if rng else "CPU"
+                freq_result[label] = freq_mhz
+    if freq_result:
+        reader._warmup_cache = freq_result
 
 
 def _batch_prime_power(reader, raw: str) -> None:
-    """解析功耗数据并建立基准"""
+    """解析功耗数据，建立基准 + 设置 _warmup_cache"""
     lines = [l.strip() for l in raw.strip().split("\n") if l.strip()]
     if len(lines) < 3:
         return
     try:
         voltage_uv = int(lines[0])
+        capacity = int(lines[1]) if lines[1].isdigit() else 0
         status_str = lines[2]
         charge_uah = int(lines[3]) if len(lines) > 3 and lines[3].lstrip('-').isdigit() else None
+        current_ua = int(lines[4]) if len(lines) > 4 and lines[4].lstrip('-').isdigit() else None
     except (ValueError, IndexError):
         return
 
+    voltage_v = voltage_uv / 1_000_000.0
     is_charging = status_str.lower() in ("charging", "full")
+
+    result = {
+        "电压(V)": round(voltage_v, 2),
+        "电量(%)": capacity,
+        "充电中": is_charging,
+    }
+    if current_ua is not None and not is_charging:
+        current_ma = abs(current_ua) / 1000.0
+        if 0 < current_ma < 10000:
+            result["电流(mA)"] = round(current_ma, 0)
+            result["功率(mW)"] = round(current_ma * voltage_v, 0)
+
+    reader._warmup_cache = result
+
     if not is_charging and charge_uah is not None:
         reader._samples.append((time.time(), charge_uah, voltage_uv))
 
 
 def _batch_prime_net(reader, raw: str) -> None:
-    """解析网络数据并建立基准"""
+    """解析网络数据并建立基准（首次 read 需要两次采样，不缓存）"""
     total_rx = 0
     total_tx = 0
     for line in raw.strip().split("\n"):

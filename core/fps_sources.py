@@ -267,32 +267,40 @@ class SFLatencyFPS:
         self._consecutive_failures = 0
 
     def read(self) -> FPSResult:
-        window = self._find_surface_view()
-        if not window:
-            # 之前有缓存窗口但现在找不到 → 目标失效
+        candidates = self._find_surface_view()
+        if not candidates:
             if self._cached_window:
                 self._cached_window = None
                 return FPSResult(FPSState.TARGET_INVALID)
             return FPSResult(FPSState.WARMUP)
-        safe_win = window.replace("'", "'\\''")
-        out, rc = self.adb.run_shell_retry(
-            f"dumpsys SurfaceFlinger --latency '{safe_win}'", timeout=8, retries=1
-        )
-        if rc != 0:
-            self._consecutive_failures += 1
-            if self._consecutive_failures >= 5:
-                self._cached_window = None  # 重新寻址
-            return FPSResult(FPSState.TRANSIENT_FAIL)
 
-        result = self._parse_latency(out)
-        if result is None:
-            self._consecutive_failures += 1
-            if self._consecutive_failures >= 5:
-                self._cached_window = None  # 重新寻址
-            return FPSResult(FPSState.TRANSIENT_FAIL)
+        # 如果有缓存窗口，优先尝试；否则从候选列表中逐个尝试
+        if self._cached_window and self._cached_window in candidates:
+            windows = [self._cached_window] + [w for w in candidates if w != self._cached_window]
         else:
+            windows = candidates
+
+        for window in windows:
+            safe_win = window.replace("'", "'\\''")
+            out, rc = self.adb.run_shell_retry(
+                f"dumpsys SurfaceFlinger --latency '{safe_win}'", timeout=8, retries=1
+            )
+            if rc != 0:
+                continue
+
+            result = self._parse_latency(out)
+            if result is not None and result > 0:
+                self._cached_window = window
+                self._consecutive_failures = 0
+                return FPSResult(FPSState.READY, result)
+
+        # 所有窗口都没有有效帧 → 源已锁定，FPS=0
+        if self._cached_window:
             self._consecutive_failures = 0
-            return FPSResult(FPSState.READY, result)
+            return FPSResult(FPSState.READY, 0.0)
+
+        # 没有缓存窗口且没有有效帧 → 等待
+        return FPSResult(FPSState.WARMUP)
 
     def _parse_latency(self, out):
         if not out:
@@ -378,9 +386,8 @@ class SFLatencyFPS:
             return None
 
         candidates.sort(key=lambda x: x[0])
-        result = candidates[0][1]
-        self._cached_window = result
-        return result
+        # 返回所有候选窗口名（去重）
+        return [name for _, name in candidates]
 
 
 # ═══════════════════════════════════════════
@@ -498,7 +505,7 @@ class SmartFPSSource:
 
     # Per-source PENDING 超时（type-based，重构安全）
     PENDING_TIMEOUT: dict[type, float] = {
-        TimeStatsFPS: 32.0,
+        TimeStatsFPS: 3.0,
         SFLatencyFPS: 1.2,
         GfxInfoFPS: 1.5,
         SFBuffFPS: 1.0,

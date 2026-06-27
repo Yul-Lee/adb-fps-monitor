@@ -199,7 +199,7 @@ class DeviceInfoWorker(QThread):
 
             # SoC 显示名：优先 chipname → soc_model → platform
             info["soc"] = info.get("chipname") or info.get("soc_model") or info.get("platform") or ""
-            # GPU 显示名：优先 vulkan → hardware
+            # GPU 显示名：优先 gpu_model（具体型号）→ vulkan → hardware
             raw_gpu = info.get("gpu_vulkan") or info.get("hardware") or ""
             gpu_map = {
                 "qcom": "Adreno", "adreno": "Adreno",
@@ -207,7 +207,20 @@ class DeviceInfoWorker(QThread):
                 "powervr": "PowerVR",
                 "radeon": "AMD RDNA", "amd": "AMD RDNA",
             }
-            info["gpu"] = gpu_map.get(raw_gpu.lower(), raw_gpu.capitalize()) if raw_gpu else ""
+            gpu_name = gpu_map.get(raw_gpu.lower(), raw_gpu.capitalize()) if raw_gpu else ""
+            # 尝试读取具体 GPU 型号
+            out, _ = self.adb.run_shell("cat /sys/kernel/gpu/gpu_model 2>/dev/null", timeout=3)
+            if out and out.strip():
+                import re as _re
+                raw = out.strip()
+                # "Adreno650v3" → "Adreno 650"
+                m = _re.match(r"^(Adreno)(\d+)", raw, _re.IGNORECASE)
+                if m:
+                    gpu_name = f"{m.group(1)} {m.group(2)}"
+                else:
+                    # Mali 等保留原始格式（如 "Mali-G78 10 cores"）
+                    gpu_name = raw
+            info["gpu"] = gpu_name
 
             # CPU 核数 + 各簇核心数（复用 cpufreq policy 结构）
             # nproc 不可用时回退到 /proc/cpuinfo

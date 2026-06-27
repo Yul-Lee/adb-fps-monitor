@@ -407,7 +407,7 @@ class DeviceInfoPanel(QWidget):
         self._lbl_android = self._add_section("系统", "—")
         self._lbl_soc = self._add_section("SoC", "—")
         self._lbl_cpu = self._add_section("CPU", "—")
-        self._lbl_gpu = self._add_section("GPU 类型", "—")
+        self._lbl_gpu = self._add_section("GPU", "—")
         self._lbl_ram = self._add_section("内存", "—")
 
         self._layout.addStretch()

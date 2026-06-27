@@ -123,15 +123,17 @@ def main():
     log.append(section("7. dumpsys thermalservice (HAL 温度)"))
     out = adb("dumpsys thermalservice", runner, timeout=5)
     temp_lines = []
-    in_current = False
+    in_section = False
     for line in out.split("\n"):
         line = line.strip()
-        if "Current temperatures from HAL:" in line:
-            in_current = True
+        if "Current temperatures from HAL:" in line or "Cached temperatures:" in line:
+            in_section = True
             continue
-        if in_current and ("CoolingDevice" in line or "Temperature static" in line):
-            break
-        if in_current and "Temperature{" in line:
+        if in_section and ("CoolingDevice" in line or "Temperature static" in line
+                           or "HAL Ready" in line or "HAL connection" in line):
+            in_section = False
+            continue
+        if in_section and "Temperature{" in line:
             temp_lines.append(line)
     if temp_lines:
         log.append(f"  找到 {len(temp_lines)} 个 HAL 温度传感器:")
@@ -139,6 +141,31 @@ def main():
             log.append(f"    {l}")
     else:
         log.append("  [无 HAL 温度数据]")
+
+    # 7b. 温度传感器映射结果
+    log.append(section("7b. 温度传感器映射结果"))
+    try:
+        from core.sensors import TemperatureReader
+        mapper = TemperatureReader.__new__(TemperatureReader)
+        mapper._user_map = {}
+        # 解析 thermalservice 数据并映射
+        import re as _re
+        mapped = []
+        for l in temp_lines:
+            m = _re.search(r"mValue=([\d.]+).*?mName=([\w-]+)", l)
+            if m:
+                val = float(m.group(1))
+                raw_name = m.group(2)
+                mapped_name = mapper._map_name(raw_name)
+                status = "✓" if mapped_name else "✗"
+                mapped.append(f"    [{status}] {raw_name:20s} = {val}°C  →  {mapped_name or '(未映射)'}")
+        if mapped:
+            for l in mapped:
+                log.append(l)
+        else:
+            log.append("  [无数据]")
+    except Exception as e:
+        log.append(f"  [映射失败: {e}]")
 
     # 8. 温度 - sysfs thermal_zone
     log.append(section("8. sysfs thermal_zone"))
@@ -259,6 +286,14 @@ def main():
     gpu_props = [l for l in out.split("\n") if any(kw in l.lower() for kw in ["gpu", "mali", "graphic"])]
     for l in gpu_props:
         log.append(f"  {l.strip()}")
+
+    # 11d. GPU 型号（/sys/kernel/gpu/gpu_model）
+    log.append(section("11d. GPU 型号 (/sys/kernel/gpu/gpu_model)"))
+    gpu_model = adb("cat /sys/kernel/gpu/gpu_model 2>/dev/null", runner)
+    if gpu_model.strip():
+        log.append(f"  gpu_model = {gpu_model.strip()}")
+    else:
+        log.append("  [不可读]")
 
     # 12. GPU 显存
     log.append(section("12. dumpsys gpu --gpumem"))

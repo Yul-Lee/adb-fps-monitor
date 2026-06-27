@@ -262,6 +262,7 @@ PAUSED
 | 骁龙 870 (kona) | Redmi K40 | ✅ | ✅ sysfs | ✅ | ✅ gpubusy | ✅ batterystats 回退 |
 | 骁龙 430 (msm8937) | Lenovo TB-X504F | ✅ sf_latency | ✅ sysfs | ✅ per-core 回退 | ✅ gpubusy | ⚠️ Android 7 限制 |
 | 玄戒 O1 | 小米 15S Pro | ✅ buffer frame | ✅ thermalservice | ✅ | ❌ 需 root | ✅ batterystats 回退 |
+| Exynos 1080 (erd9815) | vivo V2046A | ✅ timestats | ✅ thermalservice | ✅ | ❌ SELinux | ⚠️ charge_counter 静态 |
 | Exynos W1000 (erd5535) | Galaxy Watch7 | ✅ gfxinfo | ✅ thermalservice | ✅ | ✅ Mali devfreq | ✅ batterystats 回退 |
 
 > ✅ = 已实测通过　⚠️ = 有条件可用　❌ = 不可用

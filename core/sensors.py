@@ -101,10 +101,12 @@ class TemperatureReader:
         "pm8450_tz": "PMIC(8450)",
         "pmr735a_tz": "PMIC(735A)",
         "pmr735b_tz": "PMIC(735B)",
-        # Samsung Exynos
+        # Samsung Exynos / 通用 HAL 传感器
         "LITTLE": "CPU小核",
+        "MID": "CPU中核",
         "BIG": "CPU大核",
         "G3D": "GPU",
+        "NPU": "NPU",
     }
 
     def __init__(self, adb):
@@ -146,33 +148,42 @@ class TemperatureReader:
         self.read()
 
     def read(self) -> dict[str, float]:
-        """读取温度，优先缓存（batch_prime），然后 sysfs，回退 thermalservice，最后 battery"""
+        """读取温度，优先缓存（batch_prime），然后 sysfs/thermalservice，始终合并 battery"""
         if self._warmup_cache:
             result = self._warmup_cache
             self._warmup_cache = None
             return result
         result = self._read_from_sysfs()
-        if result:
-            return result
-        result = self._read_from_thermalservice()
-        if result:
-            return result
-        return self._read_battery()
+        if not result:
+            result = self._read_from_thermalservice()
+        # 始终合并电池温度（sysfs/thermalservice 可能不含电池传感器）
+        battery = self._read_battery()
+        if battery:
+            for k, v in battery.items():
+                if k not in result:
+                    result[k] = v
+        return result
 
     def _read_from_thermalservice(self) -> dict[str, float]:
         out, rc = self.adb.run_shell_retry("dumpsys thermalservice", timeout=5, retries=1)
         if rc != 0 or not out:
             return {}
         temps = {}
-        in_current = False
+        in_section = False
         for line in out.split("\n"):
             line = line.strip()
+            # 读取 "Current temperatures from HAL" 和 "Cached temperatures" 两个区段
             if "Current temperatures from HAL:" in line:
-                in_current = True
+                in_section = True
                 continue
-            if in_current and ("CoolingDevice" in line or "Temperature static" in line):
-                break
-            if in_current and "Temperature{" in line:
+            if "Cached temperatures:" in line:
+                in_section = True
+                continue
+            if in_section and ("CoolingDevice" in line or "Temperature static" in line
+                               or "HAL Ready" in line or "HAL connection" in line):
+                in_section = False
+                continue
+            if in_section and "Temperature{" in line:
                 match = re.search(r"mValue=([\d.]+).*?mName=([\w-]+)", line)
                 if match:
                     val = float(match.group(1))
@@ -658,7 +669,13 @@ class FreqReader:
                     pid = blocks[i]
                     content = blocks[i + 1].strip().split("\n")
                     freq_str = content[0].strip() if content else ""
-                    rng = content[1].strip().replace("\n", " ") if len(content) > 1 else ""
+                    raw_ids = content[1].strip().replace("\n", " ") if len(content) > 1 else ""
+                    # 转换 "0 1 2 3" → "0-3"
+                    if raw_ids:
+                        ids = raw_ids.split()
+                        rng = f"{ids[0]}-{ids[-1]}" if len(ids) > 1 else ids[0]
+                    else:
+                        rng = ""
                     if freq_str.isdigit():
                         policies.append((len(policies) + 1, pid, rng))
         self._policies = policies
@@ -1051,16 +1068,18 @@ def _batch_prime_freq(reader, raw: str) -> None:
         reader._prev_per_core = per_core
     # 解析 policy 探测数据（__P 分隔）
     sections = raw.split("__P")
+    policy_idx = 0
     for sec in sections[1:]:  # 跳过 /proc/stat 部分
         lines = [l.strip() for l in sec.strip().split("\n") if l.strip()]
         if len(lines) >= 2:
             freq_str = lines[0]
             related = lines[1]
             if freq_str.isdigit():
+                policy_idx += 1
                 freq_mhz = int(freq_str) // 1000
                 ids = related.split()
                 rng = f"{ids[0]}-{ids[-1]}" if len(ids) > 1 else (ids[0] if ids else "")
-                label = f"CPU({rng})" if rng else "CPU"
+                label = f"CPU{policy_idx}({rng})" if rng else f"CPU{policy_idx}"
                 freq_result[label] = freq_mhz
     if freq_result:
         reader._warmup_cache = freq_result

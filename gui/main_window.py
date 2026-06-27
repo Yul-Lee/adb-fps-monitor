@@ -856,8 +856,9 @@ class MainWindow(QMainWindow):
     # ═══════════════════════════════════════════
 
     def _sync_freq_data(self, t: float) -> None:
-        if not self.freq_chart:
+        if not (self._freq_updated and self.freq_chart):
             return
+        self._freq_updated = False
 
         _append_limit(self.freq_x, t, self.max_points)
 

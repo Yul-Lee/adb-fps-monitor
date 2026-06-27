@@ -74,6 +74,10 @@ class TemperatureReader:
         (r"^flash_therm$", "闪光灯"),
         (r"^backlight_therm$", "背光"),
         (r"^xo_therm$", "XO"),
+        # Qualcomm tsens 原始传感器（SoC 内部测温点）
+        (r"^tsens_tz_sensor\d+$", "SoC"),
+        (r"^case_therm$", "表面"),
+        (r"^bms$", "电池"),
     ]
 
     # 第二层：精确特例（覆盖规则中的通用匹配）
@@ -205,7 +209,7 @@ class TemperatureReader:
         for zone_type, val in zone_data.items():
             name = self._map_name(zone_type)
             if name:
-                if name not in temps:
+                if name not in temps or val > temps[name]:
                     temps[name] = round(val, 1)
         return temps
 
@@ -1004,8 +1008,9 @@ def _batch_prime_temp(reader, raw: str) -> None:
                     val = val / 1000.0
                 if -40 < val < 200:
                     name = reader._map_name(zone_type)
-                    if name and name not in temps:
-                        temps[name] = round(val, 1)
+                    if name:
+                        if name not in temps or val > temps[name]:
+                            temps[name] = round(val, 1)
             except (ValueError, IndexError):
                 pass
     if temps:

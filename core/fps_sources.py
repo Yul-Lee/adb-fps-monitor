@@ -348,6 +348,16 @@ class SFLatencyFPS:
                 seen.add(name)
                 continue
 
+            # 旧格式: SurfaceView - pkg/act（Android 7 等旧设备）
+            if line.startswith("SurfaceView - "):
+                name = line
+                if pkg and pkg in line:
+                    candidates.append((2, name))
+                else:
+                    candidates.append((4, name))
+                seen.add(name)
+                continue
+
             if pkg and pkg in line:
                 win_match = re.match(r"([^\s]+)", line)
                 if win_match:

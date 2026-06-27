@@ -201,7 +201,12 @@ class DeviceInfoWorker(QThread):
             info["soc"] = info.get("chipname") or info.get("soc_model") or info.get("platform") or ""
             # GPU 显示名：优先 vulkan → hardware
             raw_gpu = info.get("gpu_vulkan") or info.get("hardware") or ""
-            gpu_map = {"qcom": "Adreno", "mali": "Mali", "adreno": "Adreno"}
+            gpu_map = {
+                "qcom": "Adreno", "adreno": "Adreno",
+                "mali": "Mali",
+                "powervr": "PowerVR",
+                "radeon": "AMD RDNA", "amd": "AMD RDNA",
+            }
             info["gpu"] = gpu_map.get(raw_gpu.lower(), raw_gpu.capitalize()) if raw_gpu else ""
 
             # CPU 核数 + 各簇核心数（复用 cpufreq policy 结构）

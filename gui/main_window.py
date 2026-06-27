@@ -995,7 +995,6 @@ class MainWindow(QMainWindow):
             self.card_gpu_load.update_value(str(freqs["GPU负载(%)"]))
 
         self._sync_freq_data(t)
-        self._sync_freq_data(t)
         self._sync_core_usage(t, freqs)
         self._sync_core_freq(t, freqs)
 

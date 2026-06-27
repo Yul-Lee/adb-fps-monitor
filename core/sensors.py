@@ -733,7 +733,11 @@ class FreqReader:
                         cpu[label] = int(lines[i]) // 1000
             result = cpu
         else:
+            # 无 cpufreq policy 时，直接读 per-core sysfs
             result = {}
+            per_core = self._read_per_core_freqs()
+            for k, v in per_core.items():
+                result[k] = v
 
         if self._gpu_freq_path or self._gpu_load_path:
             parts = []

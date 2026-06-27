@@ -172,6 +172,8 @@ ACTIVE
     │    (长期静默：游戏退出/息屏)
     ├─ TRANSIENT_FAIL ×10 → RECOVERING
     │    (源暂时异常，尝试恢复)
+    ├─ TARGET_INVALID ────→ DISCOVERING
+    │    (目标 layer 消失，不拉黑源)
     └─ UNSUPPORTED ───────→ DISCOVERING
          (立即放弃该源)
 
@@ -205,7 +207,7 @@ PAUSED
 - `ADBRunner`：封装 adb shell 命令执行，支持重试
 - `SmartFPSSource`：状态机驱动的 FPS 源管理（PENDING 超时优化首帧延迟）
 - `TemperatureReader`：100+ 温度传感器映射，sysfs 优先，回退 thermalservice
-- `FreqReader`：CPU 集群频率 + per-core 频率 + per-core 负载 + GPU 频率/负载
+- `FreqReader`：CPU 集群频率 + per-core 频率 + per-core 负载 + GPU 频率/负载（cpufreq policy 为空时自动回退到 per-core sysfs）
 - `PowerReader`：sysfs current_now → charge_counter 差分 → batterystats 历史解析
 - `MemReader`：GPU 显存 + PSS 内存
 - `NetReader`：/proc/net/dev 上下行速率
@@ -258,7 +260,7 @@ PAUSED
 | 平台 | 设备 | FPS | 温度 | CPU 频率 | GPU 负载 | 功耗 |
 |------|------|-----|------|----------|----------|------|
 | 骁龙 870 (kona) | Redmi K40 | ✅ | ✅ sysfs | ✅ | ✅ gpubusy | ✅ batterystats 回退 |
-| 骁龙 430 (msm8937) | Lenovo TB-X504F | ✅ sf_latency | ✅ sysfs | ⚠️ 无 policy，per-core 可读 | ✅ gpubusy | ⚠️ Android 7 限制 |
+| 骁龙 430 (msm8937) | Lenovo TB-X504F | ✅ sf_latency | ✅ sysfs | ✅ per-core 回退 | ✅ gpubusy | ⚠️ Android 7 限制 |
 | 玄戒 O1 | 小米 15S Pro | ✅ buffer frame | ✅ thermalservice | ✅ | ❌ 需 root | ✅ batterystats 回退 |
 | Exynos W1000 (erd5535) | Galaxy Watch7 | ✅ gfxinfo | ✅ thermalservice | ✅ | ✅ Mali devfreq | ✅ batterystats 回退 |
 

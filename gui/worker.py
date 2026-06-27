@@ -201,13 +201,15 @@ class DeviceInfoWorker(QThread):
             info["soc"] = info.get("chipname") or info.get("soc_model") or info.get("platform") or ""
             # GPU 显示名：优先 vulkan → hardware
             raw_gpu = info.get("gpu_vulkan") or info.get("hardware") or ""
-            info["gpu"] = raw_gpu.capitalize() if raw_gpu else ""
+            gpu_map = {"qcom": "Adreno", "mali": "Mali", "adreno": "Adreno"}
+            info["gpu"] = gpu_map.get(raw_gpu.lower(), raw_gpu.capitalize()) if raw_gpu else ""
 
             # CPU 核数 + 各簇核心数（复用 cpufreq policy 结构）
+            # nproc 不可用时回退到 /proc/cpuinfo
             out, _ = self.adb.run_shell(
-                "nproc --all; "
-                "for p in /sys/devices/system/cpu/cpufreq/policy*/; do "
-                "wc -w < ${p}related_cpus 2>/dev/null; done",
+                "nproc --all 2>/dev/null || grep -c '^processor' /proc/cpuinfo; "
+                "(for p in /sys/devices/system/cpu/cpufreq/policy*/; do "
+                "wc -w < ${p}related_cpus 2>/dev/null; done) 2>/dev/null",
                 timeout=5
             )
             if self.isInterruptionRequested():

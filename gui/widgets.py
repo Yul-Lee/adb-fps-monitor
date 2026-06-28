@@ -5,7 +5,7 @@ import bisect
 from PyQt6.QtWidgets import (QLabel, QWidget, QVBoxLayout, QHBoxLayout,
                               QGridLayout, QPushButton, QFrame, QCheckBox,
                               QComboBox, QScrollArea)
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QElapsedTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QElapsedTimer, QPointF
 import pyqtgraph as pg
 
 
@@ -169,6 +169,12 @@ class CrosshairChart(pg.PlotWidget):
         self._hover_timer.restart()
 
         mouse_point = vb.mapSceneToView(pos)
+        self._last_hover_x = mouse_point.x()
+
+        self._update_crosshair_and_tooltip(vb, mouse_point)
+
+    def _update_crosshair_and_tooltip(self, vb, mouse_point) -> None:
+        """更新十字线和 tooltip（供鼠标移动和传感器切换共用）"""
         x = mouse_point.x()
 
         self._crosshair_v.setPos(x)
@@ -226,6 +232,17 @@ class CrosshairChart(pg.PlotWidget):
             self._tooltip_label.raise_()
         else:
             self._tooltip_label.hide()
+
+    def refresh_tooltip(self) -> None:
+        """传感器切换后刷新 tooltip（使用上次鼠标位置重新计算）"""
+        if self._last_hover_x is None:
+            return
+        vb = self.getViewBox()
+        if vb is None:
+            return
+        mouse_point = QPointF(self._last_hover_x, 0)
+        self._cached_plot_items = None
+        self._update_crosshair_and_tooltip(vb, mouse_point)
 
     def show_ref_at(self, x: float) -> None:
         """显示参考十字线（来自其他图表联动）"""
@@ -580,7 +597,7 @@ class ChartPanel(QFrame):
 class SettingsPanel(QWidget):
     """独立传感器选择面板 — 非模态浮动窗口，通过工具栏按钮 toggle"""
 
-    TEMP_IMPORTANT = {"CPU", "GPU", "表面", "电池"}
+    TEMP_IMPORTANT = {"CPU", "GPU", "表面", "电池", "CPU大核", "CPU中核", "CPU小核"}
     TEMP_GRID_COLS = 3  # 温度复选框网格列数
 
     # 信号：(类型, 名称, 状态)  类型: "temp"/"freq"/"core_usage"/"core_freq"
@@ -618,17 +635,10 @@ class SettingsPanel(QWidget):
         # ─── 温度 ───
         self._add_label(self._layout, "🌡 温度传感器",
                         "color: #f38ba8; font-weight: bold; font-size: 13px; padding: 4px 0;")
-        self._show_all_temp = QCheckBox("显示所有已映射传感器")
-        self._show_all_temp.setChecked(False)
-        self._show_all_temp.setStyleSheet("color: #6c7086; font-size: 11px; padding: 2px 0 2px 16px;")
-        self._show_all_temp.stateChanged.connect(self._on_show_all_temp)
-        self._layout.addWidget(self._show_all_temp)
         self._temp_grid = QGridLayout()
         self._temp_grid.setSpacing(2)
         self._layout.addLayout(self._temp_grid)
         self._temp_checkboxes: dict[str, QCheckBox] = {}
-        self._temp_row = 0
-        self._temp_col = 0
         self._layout.addSpacing(8)
 
         # ─── CPU/GPU 频率 ───
@@ -638,8 +648,6 @@ class SettingsPanel(QWidget):
         self._freq_grid.setSpacing(2)
         self._layout.addLayout(self._freq_grid)
         self._freq_checkboxes: dict[str, QCheckBox] = {}
-        self._freq_row = 0
-        self._freq_col = 0
         self._layout.addSpacing(8)
 
         # ─── 单核 CPU 负载 ───
@@ -666,33 +674,50 @@ class SettingsPanel(QWidget):
         lbl.setStyleSheet(style)
         layout.addWidget(lbl)
 
+    # ─── 排序辅助 ───
+
+    @staticmethod
+    def _temp_sort_key(name: str) -> tuple:
+        """温度传感器排序：CPU → GPU → SoC → NPU → 电池 → 表面 → 内存 → WiFi → 相机 → PMIC → 充电 → 射频 → 其他"""
+        prefix_order = [
+            ("CPU", 0), ("GPU", 1), ("SoC", 2), ("AOSS", 2), ("NPU", 3),
+            ("电池", 4), ("表面", 5), ("内存", 6), ("WiFi", 7),
+            ("相机", 8), ("PMIC", 9), ("充电", 10), ("射频", 11),
+        ]
+        for prefix, priority in prefix_order:
+            if name.startswith(prefix):
+                return (priority, name)
+        return (99, name)
+
+    @staticmethod
+    def _freq_sort_key(name: str) -> tuple:
+        """频率传感器排序：CPU 策略 → GPU → 其他"""
+        if name.startswith("CPU"):
+            return (0, name)
+        if name.startswith("GPU"):
+            return (1, name)
+        return (99, name)
+
+    def _rebuild_grid(self, grid: QGridLayout, checkboxes: dict, sort_key) -> None:
+        """清空网格并按排序重新添加所有复选框"""
+        for name in sorted(checkboxes, key=sort_key):
+            grid.removeWidget(checkboxes[name])
+        for i, name in enumerate(sorted(checkboxes, key=sort_key)):
+            row, col = divmod(i, self.TEMP_GRID_COLS)
+            grid.addWidget(checkboxes[name], row, col)
+
     # ─── 温度复选框（3 列网格） ───
 
     def add_temp_checkbox(self, name: str) -> QCheckBox:
         if name in self._temp_checkboxes:
             return self._temp_checkboxes[name]
         cb = QCheckBox(name)
-        is_important = name in self.TEMP_IMPORTANT
-        cb.setChecked(is_important)
+        cb.setChecked(name in self.TEMP_IMPORTANT)
         cb.setStyleSheet("color: #cdd6f4; font-size: 12px; padding: 2px 0 2px 8px;")
         cb.stateChanged.connect(lambda state, n=name: self.checkbox_changed.emit("temp", n, state))
         self._temp_checkboxes[name] = cb
-        self._temp_grid.addWidget(cb, self._temp_row, self._temp_col)
-        self._temp_col += 1
-        if self._temp_col >= self.TEMP_GRID_COLS:
-            self._temp_col = 0
-            self._temp_row += 1
-        if not is_important and not self._show_all_temp.isChecked():
-            cb.hide()
+        self._rebuild_grid(self._temp_grid, self._temp_checkboxes, self._temp_sort_key)
         return cb
-
-    def _on_show_all_temp(self, state: int) -> None:
-        show_all = state == 2
-        for name, cb in self._temp_checkboxes.items():
-            if name in self.TEMP_IMPORTANT or show_all:
-                cb.show()
-            else:
-                cb.hide()
 
     def is_temp_checked(self, name: str) -> bool:
         return name in self._temp_checkboxes and self._temp_checkboxes[name].isChecked()
@@ -707,11 +732,7 @@ class SettingsPanel(QWidget):
         cb.setStyleSheet("color: #cdd6f4; font-size: 12px; padding: 2px 0 2px 8px;")
         cb.stateChanged.connect(lambda state, n=name: self.checkbox_changed.emit("freq", n, state))
         self._freq_checkboxes[name] = cb
-        self._freq_grid.addWidget(cb, self._freq_row, self._freq_col)
-        self._freq_col += 1
-        if self._freq_col >= self.TEMP_GRID_COLS:
-            self._freq_col = 0
-            self._freq_row += 1
+        self._rebuild_grid(self._freq_grid, self._freq_checkboxes, self._freq_sort_key)
         return cb
 
     def is_freq_checked(self, name: str) -> bool:

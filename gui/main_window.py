@@ -348,16 +348,20 @@ class MainWindow(QMainWindow):
     def _on_sensor_toggle(self, kind: str, name: str, state: int) -> None:
         if kind == "temp":
             self._on_temp_toggle(name, state)
+            self.temp_chart.refresh_tooltip()
         elif kind == "freq":
             self._on_freq_toggle(name, state)
+            self.freq_chart.refresh_tooltip()
         elif kind == "core_usage":
             if name in self._core_usage_curves and self._core_usage_curves[name] is not None:
                 self._core_usage_curves[name].setVisible(state == 2)
                 self._rebuild_legend(self.core_usage_chart, self._core_usage_curves)
+                self.core_usage_chart.refresh_tooltip()
         elif kind == "core_freq":
             if name in self._core_freq_curves and self._core_freq_curves[name] is not None:
                 self._core_freq_curves[name].setVisible(state == 2)
                 self._rebuild_legend(self.core_freq_chart, self._core_freq_curves)
+                self.core_freq_chart.refresh_tooltip()
 
     # ═══════════════════════════════════════════
     # 设备检测 + 选择

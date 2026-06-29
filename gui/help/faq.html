@@ -1,0 +1,47 @@
+<h2 style="color:#89b4fa;">常见问题</h2>
+
+<h3 style="color:#f38ba8;">设备未检测到</h3>
+<p><b>现象</b>：设备下拉框为空，显示"未检测到设备"。</p>
+<p><b>解决</b>：</p>
+<ul>
+<li>确认 USB 调试已开启（设置 → 开发者选项 → USB 调试）</li>
+<li>确认 USB 线支持数据传输（非仅充电线）</li>
+<li>在终端运行 <code>adb devices</code> 确认设备已识别</li>
+<li>如果是首次连接，需要在设备上确认 USB 调试授权弹窗</li>
+<li>尝试重新插拔 USB 线或重启 ADB 服务：<code>adb kill-server && adb start-server</code></li>
+</ul>
+
+<h3 style="color:#f38ba8;">无 FPS 数据</h3>
+<p><b>现象</b>：监控已开始但 FPS 图表无数据。</p>
+<p><b>解决</b>：</p>
+<ul>
+<li>确认目标应用正在渲染（有动画/滚动等），停留在桌面或静态页面无法采集帧数据</li>
+<li>切换到有动画的应用（如游戏、视频、浏览器滚动）</li>
+<li>工具会自动尝试 4 种 FPS 数据源，部分应用可能不支持某些数据源</li>
+</ul>
+
+<h3 style="color:#f38ba8;">温度传感器为空</h3>
+<p><b>现象</b>：温度图表无数据。</p>
+<p><b>解决</b>：</p>
+<ul>
+<li>部分设备的 sysfs thermal_zone 权限受限，需要 root 权限</li>
+<li>工具会自动降级到 thermalservice → battery 温度回退</li>
+<li>可在 <code>temp_map.json</code> 中添加自定义传感器映射</li>
+</ul>
+
+<h3 style="color:#f38ba8;">WiFi 连接速度慢</h3>
+<p><b>现象</b>：数据采集延迟明显。</p>
+<p><b>原因</b>：ADB over WiFi 的每次 subprocess 调用有 100-200ms 额外延迟（USB 约 10-30ms）。</p>
+<p><b>建议</b>：优先使用 USB 连接，WiFi 连接适合无法 USB 的场景。</p>
+
+<h3 style="color:#f38ba8;">AOD 息屏显示异常 FPS</h3>
+<p><b>现象</b>：息屏状态下显示 5-15 FPS。</p>
+<p><b>原因</b>：SFBuffFPS 无法区分 AOD（Always-On Display）Surface，会统计到息屏渲染帧。</p>
+
+<h3 style="color:#f38ba8;">GPU 负载/频率为空</h3>
+<p><b>现象</b>：GPU 相关数据不显示。</p>
+<p><b>原因</b>：</p>
+<ul>
+<li>部分设备的 GPU sysfs 被 SELinux 封死，需要 root</li>
+<li>工具支持骁龙（kgsl）、Mali、PowerVR、AMD RDNA 等平台，其他平台可能无数据</li>
+</ul>

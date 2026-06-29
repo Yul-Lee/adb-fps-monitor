@@ -1,11 +1,12 @@
-"""UI 组件 — StatCard、CrosshairChart、FPSChart、TimeAxisWidget、DeviceInfoPanel、ChartPanel、SettingsPanel"""
+"""UI 组件 — StatCard、CrosshairChart、FPSChart、TimeAxisWidget、DeviceInfoPanel、ChartPanel、SettingsPanel、HelpDialog"""
 
 import bisect
+import os
 
 from PyQt6.QtWidgets import (QLabel, QWidget, QVBoxLayout, QHBoxLayout,
                               QGridLayout, QPushButton, QFrame, QCheckBox,
-                              QComboBox, QScrollArea)
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QElapsedTimer, QPointF
+                              QComboBox, QScrollArea, QDialog, QTextBrowser)
+from PyQt6.QtCore import Qt, QEvent, pyqtSignal, QElapsedTimer, QPointF
 import pyqtgraph as pg
 
 
@@ -484,6 +485,17 @@ class DeviceInfoPanel(QWidget):
         """)
         self._layout.addWidget(self.btn_settings)
 
+        self._layout.addSpacing(4)
+
+        self.btn_help = QPushButton("? 帮助")
+        self.btn_help.setFixedHeight(36)
+        self.btn_help.setStyleSheet("""
+            QPushButton { background: #313244; color: #89b4fa; font-size: 13px; font-weight: bold;
+                          border-radius: 6px; padding: 4px 12px; border: 2px solid #45475a; }
+            QPushButton:hover { background: #45475a; }
+        """)
+        self._layout.addWidget(self.btn_help)
+
     def _add_sep(self) -> None:
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
@@ -753,3 +765,162 @@ class SettingsPanel(QWidget):
         col = count % self.TEMP_GRID_COLS
         grid.addWidget(cb, row, col)
         return cb
+
+
+# ─── AccordionSection ──────────────
+
+class AccordionSection(QWidget):
+    """可折叠的内容区块 — 点击标题展开/折叠"""
+
+    def __init__(self, section_id: str, title: str, html: str, parent=None):
+        super().__init__(parent)
+        self.section_id = section_id
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # 标题按钮
+        self._btn = QPushButton(f"  ▶  {title}")
+        self._btn.setFixedHeight(32)
+        self._btn.setStyleSheet("""
+            QPushButton {
+                background: #313244; color: #cdd6f4; border: 1px solid #45475a;
+                border-radius: 4px; font-size: 13px; font-weight: bold; text-align: left;
+                padding-left: 8px;
+            }
+            QPushButton:hover { background: #45475a; }
+        """)
+        self._btn.clicked.connect(self._toggle)
+        layout.addWidget(self._btn)
+
+        # 内容区
+        self._content = QTextBrowser()
+        self._content.setHtml(html)
+        self._content.setReadOnly(True)
+        self._content.setOpenExternalLinks(True)
+        self._content.setFrameShape(QFrame.Shape.NoFrame)
+        self._content.setStyleSheet("""
+            QTextBrowser {
+                background: #1e1e2e; color: #cdd6f4; border: none;
+                padding: 8px 12px; font-size: 12px;
+            }
+        """)
+        self._content.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._content.hide()
+        self._content.viewport().installEventFilter(self)
+        layout.addWidget(self._content)
+
+        self._expanded = False
+        self._last_vp_w = 0
+
+    def _toggle(self) -> None:
+        self._expanded = not self._expanded
+        self._content.setVisible(self._expanded)
+        title = self._btn.text()
+        if self._expanded:
+            self._btn.setText(title.replace("▶", "▼"))
+        else:
+            self._btn.setText(title.replace("▼", "▶"))
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self._content.viewport() and event.type() == QEvent.Type.Resize:
+            if self._expanded and self._content.isVisible():
+                vp_w = self._content.viewport().width()
+                if vp_w != self._last_vp_w:
+                    self._last_vp_w = vp_w
+                    self._adjust_height()
+        return super().eventFilter(obj, event)
+
+    def _adjust_height(self) -> None:
+        if not self._content.isVisible():
+            return
+        doc = self._content.document()
+        doc.setTextWidth(self._content.viewport().width())
+        doc_h = doc.size().height()
+        self._content.setFixedHeight(int(doc_h) + 16)
+
+    def expand(self) -> None:
+        if not self._expanded:
+            self._toggle()
+
+    def collapse(self) -> None:
+        if self._expanded:
+            self._toggle()
+
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+
+# ─── HelpDialog ────────────────────
+
+_HELP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "help")
+
+_HELP_SECTIONS = [
+    ("quick_start", "快速开始"),
+    ("charts", "图表说明"),
+    ("metrics", "指标定义"),
+    ("sensors", "传感器说明"),
+    ("settings", "设置面板"),
+    ("recording", "数据录制"),
+    ("faq", "常见问题"),
+    ("cli", "命令行参数"),
+]
+
+
+class HelpDialog(QDialog):
+    """帮助对话框 — 单例，通过 MainWindow 管理"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("帮助")
+        self.setMinimumSize(500, 400)
+        self.resize(560, 700)
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
+        self.setStyleSheet("background: #181825; color: #cdd6f4;")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(12, 12, 12, 12)
+        outer.setSpacing(8)
+
+        # 标题
+        title = QLabel("❓ 使用帮助")
+        title.setStyleSheet("color: #89b4fa; font-size: 15px; font-weight: bold;")
+        outer.addWidget(title)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #313244;")
+        outer.addWidget(sep)
+
+        # 可滚动区域
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background: #181825; border: none; }")
+        scroll_widget = QWidget()
+        scroll_widget.setStyleSheet("background: #181825;")
+        self._layout = QVBoxLayout(scroll_widget)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(2)
+
+        self._sections: dict[str, AccordionSection] = {}
+        self._build_sections()
+
+        self._layout.addStretch()
+        scroll.setWidget(scroll_widget)
+        outer.addWidget(scroll, stretch=1)
+
+    def _build_sections(self) -> None:
+        for section_id, title in _HELP_SECTIONS:
+            html = self._load_html(section_id)
+            section = AccordionSection(section_id, title, html, self)
+            self._sections[section_id] = section
+            self._layout.addWidget(section)
+
+    def _load_html(self, section_id: str) -> str:
+        path = os.path.join(_HELP_DIR, f"{section_id}.html")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read()
+        except FileNotFoundError:
+            return f"<p style='color:#f38ba8;'>内容文件缺失：{section_id}.html</p>"

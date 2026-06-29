@@ -1,0 +1,43 @@
+<h2 style="color:#89b4fa;">图表说明</h2>
+
+<p>右侧图表区域包含 6 个实时图表，共享 X 轴（时间），支持十字线联动和拖拽平移。</p>
+
+<h3 style="color:#a6e3a1;">FPS 曲线</h3>
+<p>显示每秒帧数（FPS）的实时变化。曲线越平稳、越高，表示流畅度越好。</p>
+<ul>
+<li><b>Jank 标记条</b>：红色柱状标记，表示帧时间超过卡顿阈值的时间点</li>
+<li><b>平均线</b>：黄色虚线，显示本次会话的平均 FPS</li>
+</ul>
+
+<h3 style="color:#a6e3a1;">帧时间</h3>
+<p>每帧的渲染时间（毫秒），由 1000/FPS 计算得出。</p>
+<ul>
+<li>60 FPS → 16.7ms</li>
+<li>30 FPS → 33.3ms</li>
+<li>超过 33.3ms 的帧会被标记为 Jank</li>
+</ul>
+
+<h3 style="color:#a6e3a1;">温度</h3>
+<p>设备各区域的实时温度（°C），数据来自 sysfs thermal_zone 传感器。</p>
+<p>通过 <b>⚙ 设置</b>面板可控制哪些温度传感器显示在图表中。</p>
+
+<h3 style="color:#a6e3a1;">CPU/GPU 频率</h3>
+<p>CPU 各集群的运行频率（MHz）和 GPU 频率/负载。</p>
+<ul>
+<li>CPU 频率来自 cpufreq sysfs</li>
+<li>GPU 频率/负载来自平台特定路径（骁龙 kgsl / Mali devfreq）</li>
+</ul>
+
+<h3 style="color:#a6e3a1;">单核 CPU 负载</h3>
+<p>每个 CPU 核心的使用率百分比，数据来自 <code>/proc/stat</code>。</p>
+
+<h3 style="color:#a6e3a1;">单核 CPU 频率</h3>
+<p>每个 CPU 核心的当前运行频率（MHz），数据来自 cpufreq sysfs。</p>
+
+<h3 style="color:#f9e2af;">图表交互</h3>
+<ul>
+<li><b>十字线联动</b>：鼠标悬停在任意图表上时，其他图表会同步显示参考线</li>
+<li><b>拖拽平移</b>：按住鼠标左右拖拽可平移时间轴</li>
+<li><b>底部导航条</b>：拖拽蓝色选区可快速定位时间范围</li>
+<li><b>自动滚动</b>：新数据到达时自动滚动到最新位置</li>
+</ul>

@@ -1,0 +1,31 @@
+<h2 style="color:#89b4fa;">命令行参数</h2>
+
+<p>工具支持通过命令行参数控制启动行为：</p>
+
+<table>
+<tr><th>参数</th><th>说明</th><th>默认值</th></tr>
+<tr><td><code>-s, --serial</code></td><td>指定设备序列号（多设备时使用）</td><td>自动选择第一个</td></tr>
+<tr><td><code>-p, --package</code></td><td>指定目标应用包名</td><td>自动检测前台应用</td></tr>
+<tr><td><code>-i, --interval</code></td><td>FPS 采样间隔（秒，最低 1.0）</td><td>1.0</td></tr>
+<tr><td><code>--no-temp</code></td><td>关闭温度监控</td><td>开启</td></tr>
+<tr><td><code>--no-freq</code></td><td>关闭频率监控</td><td>开启</td></tr>
+<tr><td><code>--debug</code></td><td>开启调试日志，输出到 <code>adb_fps_debug.log</code></td><td>关闭</td></tr>
+</table>
+
+<h3 style="color:#a6e3a1;">使用示例</h3>
+<p>指定设备和包名：</p>
+<p><code>python adb_fps_monitor.py -s DEVICE_SERIAL -p com.example.app</code></p>
+
+<p>关闭温度监控，2 秒采样间隔：</p>
+<p><code>python adb_fps_monitor.py --no-temp -i 2.0</code></p>
+
+<p>开启调试日志：</p>
+<p><code>python adb_fps_monitor.py --debug</code></p>
+
+<h3 style="color:#a6e3a1;">环境要求</h3>
+<ul>
+<li><b>Python</b>：3.10+</li>
+<li><b>依赖</b>：PyQt6 &gt;= 6.5.0、pyqtgraph &gt;= 0.13.0、numpy &gt;= 1.24.0</li>
+<li><b>ADB</b>：工具内置 platform-tools，也可使用系统 PATH 中的 ADB</li>
+<li><b>设备</b>：Android 7+ 的设备，需开启 USB 调试</li>
+</ul>

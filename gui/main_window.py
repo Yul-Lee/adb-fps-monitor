@@ -22,7 +22,7 @@ from core.fps_sources import SmartFPSSource
 from core.sensors import TemperatureReader, FreqReader, PowerReader, MemReader, NetReader, batch_prime
 from gui.widgets import (COLORS, WINDOW_SECONDS, StatCard, FPSChart,
                           CrosshairChart, TimeAxisWidget,
-                          DeviceInfoPanel, ChartPanel, SettingsPanel)
+                          DeviceInfoPanel, ChartPanel, SettingsPanel, HelpDialog)
 from gui.worker import FPSWorker, GenericSensorWorker, DeviceInfoWorker, FPSUpdate
 from gui.recorder import CSVRecorder
 
@@ -136,6 +136,9 @@ class MainWindow(QMainWindow):
         # ─── CSV 录制 ───
         self.recorder = CSVRecorder()
 
+        # ─── 帮助对话框（单例） ───
+        self._help_dialog: HelpDialog | None = None
+
         # ─── 预热状态 ───
         self.ready_count = 0
         self.total_workers = 0
@@ -166,6 +169,7 @@ class MainWindow(QMainWindow):
         self.device_info_panel.save_clicked.connect(self._on_save_clicked)
         self.device_info_panel.btn_refresh.clicked.connect(self._detect_devices)
         self.device_info_panel.btn_settings.clicked.connect(self._toggle_settings_panel)
+        self.device_info_panel.btn_help.clicked.connect(self._show_help)
         root_layout.addWidget(self.device_info_panel)
 
         # ─── 右侧：主内容区 ───
@@ -344,6 +348,13 @@ class MainWindow(QMainWindow):
             self.settings_panel.move(geo.right() - self.settings_panel.width() - 20,
                                      geo.top() + 80)
             self.settings_panel.show()
+
+    def _show_help(self) -> None:
+        if self._help_dialog is None:
+            self._help_dialog = HelpDialog(self)
+        self._help_dialog.show()
+        self._help_dialog.raise_()
+        self._help_dialog.activateWindow()
 
     def _on_sensor_toggle(self, kind: str, name: str, state: int) -> None:
         if kind == "temp":

@@ -1,0 +1,33 @@
+<h2 style="color:#89b4fa;">数据录制</h2>
+
+<p>工具支持两种数据保存方式：</p>
+
+<h3 style="color:#a6e3a1;">实时录制</h3>
+<ol>
+<li>监控过程中点击 <b>⏺ 录制</b>按钮开始录制</li>
+<li>录制期间，每帧 FPS 数据和当前传感器数据会逐行写入 CSV 文件</li>
+<li>点击 <b>⏹ 结束</b>停止录制</li>
+<li>录制文件自动保存为 <code>fps_record_YYYYMMDD_HHMMSS.csv</code></li>
+</ol>
+
+<h3 style="color:#a6e3a1;">快照保存</h3>
+<ol>
+<li>监控结束后，点击 <b>💾 保存数据</b>按钮</li>
+<li>工具会一次性导出所有已采集的 FPS 数据和传感器数据</li>
+<li>保存为 CSV 文件</li>
+</ol>
+
+<h3 style="color:#a6e3a1;">CSV 格式</h3>
+<p>导出的 CSV 文件包含以下列：</p>
+<table>
+<tr><th>列名</th><th>说明</th></tr>
+<tr><td><code>time</code></td><td>时间戳（秒）</td></tr>
+<tr><td><code>fps</code></td><td>当前 FPS</td></tr>
+<tr><td><code>avg</code></td><td>平均 FPS</td></tr>
+<tr><td><code>jank_count</code></td><td>Jank 累计次数</td></tr>
+<tr><td><code>big_jank_count</code></td><td>BigJank 累计次数</td></tr>
+<tr><td><code>freeze_count</code></td><td>Freeze 累计次数</td></tr>
+<tr><td><code>temp_*</code></td><td>各温度传感器数据（动态列）</td></tr>
+<tr><td><code>freq_*</code></td><td>各频率传感器数据（动态列）</td></tr>
+</table>
+<p style="color:#585b70;">注：温度和频率列在运行时按需添加，首次写入时生成表头。</p>

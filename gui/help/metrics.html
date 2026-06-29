@@ -1,0 +1,40 @@
+<h2 style="color:#89b4fa;">指标定义</h2>
+
+<p>左侧面板显示的核心性能指标及其含义：</p>
+
+<h3 style="color:#a6e3a1;">帧率指标</h3>
+<table>
+<tr><th>指标</th><th>定义</th></tr>
+<tr><td><b>FPS</b></td><td>当前每秒帧数，由 SurfaceFlinger 实际渲染帧计数得出</td></tr>
+<tr><td><b>Avg</b></td><td>本次会话的平均 FPS</td></tr>
+<tr><td><b>Min</b></td><td>本次会话的最低 FPS</td></tr>
+<tr><td><b>Max</b></td><td>本次会话的最高 FPS</td></tr>
+<tr><td><b>Count</b></td><td>本次会话的总采样次数</td></tr>
+<tr><td><b>Time</b></td><td>本次会话的持续时间</td></tr>
+</table>
+
+<h3 style="color:#a6e3a1;">卡顿指标</h3>
+<table>
+<tr><th>指标</th><th>定义</th></tr>
+<tr><td><b>Jank</b></td><td>帧时间 &gt; 中位数 × 1.5 的次数（轻微卡顿）</td></tr>
+<tr><td><b>BigJank</b></td><td>帧时间 &gt; 中位数 × 2.5 的次数（严重卡顿）</td></tr>
+<tr><td><b>Freeze</b></td><td>帧时间 &gt; 中位数 × 4 且 &gt; 100ms 的次数（冻屏）</td></tr>
+</table>
+<p style="color:#585b70;">注：中位数基于最近 30 帧的帧时间动态计算，连续卡顿超过 10 次时会更新基准。</p>
+
+<h3 style="color:#a6e3a1;">低帧率指标</h3>
+<table>
+<tr><th>指标</th><th>定义</th></tr>
+<tr><td><b>1% Low</b></td><td>最低 1% FPS 的平均值，反映最差情况下的帧率</td></tr>
+<tr><td><b>0.1% Low</b></td><td>最低 0.1% FPS 的平均值，反映极端卡顿时的帧率</td></tr>
+</table>
+
+<h3 style="color:#a6e3a1;">FPS 数据源</h3>
+<p>工具按优先级自动选择最佳数据源：</p>
+<table>
+<tr><th>优先级</th><th>数据源</th><th>原理</th><th>适用场景</th></tr>
+<tr><td>1</td><td>TimeStats</td><td>SurfaceFlinger timestats</td><td>Android 12+，最准确</td></tr>
+<tr><td>2</td><td>SFLatency</td><td>SurfaceFlinger latency</td><td>通用，兼容旧格式</td></tr>
+<tr><td>3</td><td>GfxInfo</td><td>dumpsys gfxinfo</td><td>需要包名</td></tr>
+<tr><td>4</td><td>SFBuff</td><td>SurfaceFlinger buffer</td><td>保底方案</td></tr>
+</table>

@@ -1,0 +1,50 @@
+<h2 style="color:#89b4fa;">传感器说明</h2>
+
+<p>工具通过 ADB 读取设备的各类传感器数据。通过 <b>⚙ 设置</b>面板可控制哪些传感器在图表中显示。</p>
+
+<h3 style="color:#a6e3a1;">温度传感器</h3>
+<p>数据来自 sysfs thermal_zone，通过映射规则转换为可读名称：</p>
+<table>
+<tr><th>类别</th><th>传感器</th><th>说明</th></tr>
+<tr><td rowspan="5"><b>CPU</b></td><td>CPU</td><td>CPU 整体温度</td></tr>
+<tr><td>CPU小核</td><td>小核集群（效率核心）温度</td></tr>
+<tr><td>CPU中核</td><td>中核集群温度</td></tr>
+<tr><td>CPU大核</td><td>大核集群（性能核心）温度</td></tr>
+<tr><td>CPU超大核</td><td>超大核集群温度</td></tr>
+<tr><td rowspan="2"><b>GPU</b></td><td>GPU</td><td>GPU 温度</td></tr>
+<tr><td>GPU(峰值)</td><td>GPU 峰值温度</td></tr>
+<tr><td><b>SoC</b></td><td>SoC</td><td>片上系统整体温度</td></tr>
+<tr><td><b>NPU</b></td><td>NPU</td><td>神经网络处理器温度</td></tr>
+<tr><td><b>电池</b></td><td>电池</td><td>电池温度</td></tr>
+<tr><td><b>表面</b></td><td>表面</td><td>设备外壳/皮肤温度</td></tr>
+<tr><td><b>内存</b></td><td>内存</td><td>DDR 内存温度</td></tr>
+<tr><td><b>WiFi</b></td><td>WiFi</td><td>WiFi 模块温度</td></tr>
+<tr><td><b>PMIC</b></td><td>PMIC</td><td>电源管理芯片温度</td></tr>
+<tr><td><b>充电</b></td><td>充电通路/充电器</td><td>充电相关温度</td></tr>
+<tr><td><b>相机</b></td><td>相机</td><td>相机模块温度</td></tr>
+</table>
+
+<h3 style="color:#a6e3a1;">频率传感器</h3>
+<table>
+<tr><th>传感器</th><th>说明</th></tr>
+<tr><td><b>CPU1(0-3)</b></td><td>CPU 策略 1 的运行频率，核心 0-3（通常是小核集群）</td></tr>
+<tr><td><b>CPU2(4-6)</b></td><td>CPU 策略 2 的运行频率，核心 4-6（通常是大核集群）</td></tr>
+<tr><td><b>GPU</b></td><td>GPU 当前运行频率（MHz）</td></tr>
+<tr><td><b>GPU负载(%)</b></td><td>GPU 繁忙百分比</td></tr>
+</table>
+
+<h3 style="color:#a6e3a1;">单核传感器</h3>
+<table>
+<tr><th>传感器</th><th>说明</th></tr>
+<tr><td><b>Core0(%) ~ Core7(%)</b></td><td>每个 CPU 核心的使用率，数据来自 /proc/stat</td></tr>
+<tr><td><b>Core0 ~ Core7</b></td><td>每个 CPU 核心的当前频率（MHz），数据来自 cpufreq sysfs</td></tr>
+</table>
+<p style="color:#585b70;">注：核心数量因设备 SoC 不同而异（4核/6核/8核等）。</p>
+
+<h3 style="color:#a6e3a1;">映射机制</h3>
+<p>温度传感器名称通过三层映射规则转换：</p>
+<ol>
+<li><b>用户自定义</b>：<code>temp_map.json</code> 文件（最高优先级）</li>
+<li><b>精确匹配</b>：内置的特殊传感器名称映射</li>
+<li><b>正则匹配</b>：覆盖骁龙/天玑/Exynos/通用平台的 ~80 条规则</li>
+</ol>

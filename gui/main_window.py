@@ -10,6 +10,7 @@
 
 import bisect
 import logging
+import os
 import statistics
 import time
 
@@ -204,6 +205,7 @@ class MainWindow(QMainWindow):
         self.device_info_panel.btn_refresh.clicked.connect(self._detect_devices)
         self.device_info_panel.btn_settings.clicked.connect(self._toggle_settings_panel)
         self.device_info_panel.btn_help.clicked.connect(self._show_help)
+        self.device_info_panel.btn_install_app.clicked.connect(self._install_companion_app)
         root_layout.addWidget(self.device_info_panel)
 
         # ─── 右侧：主内容区 ───
@@ -389,6 +391,31 @@ class MainWindow(QMainWindow):
         self._help_dialog.show()
         self._help_dialog.raise_()
         self._help_dialog.activateWindow()
+
+    def _install_companion_app(self) -> None:
+        """通过 ADB 推送配套 App APK 到设备"""
+        import glob as glob_mod
+        base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "companion-app")
+        apks = glob_mod.glob(os.path.join(base, "ADBMonitorCompanion-*.apk"))
+        if not apks:
+            self.device_info_panel.btn_install_app.setText("❌ 无APK")
+            QTimer.singleShot(2000, lambda: self.device_info_panel.btn_install_app.setText("📱 安装App"))
+            return
+        apk = apks[0]
+        self.device_info_panel.btn_install_app.setText("安装中...")
+        self.device_info_panel.btn_install_app.setEnabled(False)
+
+        def do_install():
+            out, rc = self.adb.run_host("install", "-r", apk, timeout=30)
+            if rc == 0:
+                self.device_info_panel.btn_install_app.setText("✅ 已安装")
+            else:
+                self.device_info_panel.btn_install_app.setText("❌ 失败")
+            self.device_info_panel.btn_install_app.setEnabled(True)
+            QTimer.singleShot(2000, lambda: self.device_info_panel.btn_install_app.setText("📱 安装App"))
+
+        import threading
+        threading.Thread(target=do_install, daemon=True).start()
 
     def _on_sensor_toggle(self, kind: str, name: str, state: int) -> None:
         if kind == "temp":

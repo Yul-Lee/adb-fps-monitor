@@ -487,6 +487,17 @@ class DeviceInfoPanel(QWidget):
 
         self._layout.addSpacing(4)
 
+        self.btn_install_app = QPushButton("📱 安装App")
+        self.btn_install_app.setFixedHeight(36)
+        self.btn_install_app.setStyleSheet("""
+            QPushButton { background: #313244; color: #f9e2af; font-size: 13px; font-weight: bold;
+                          border-radius: 6px; padding: 4px 12px; border: 2px solid #45475a; }
+            QPushButton:hover { background: #45475a; }
+        """)
+        self._layout.addWidget(self.btn_install_app)
+
+        self._layout.addSpacing(4)
+
         self.btn_help = QPushButton("? 帮助")
         self.btn_help.setFixedHeight(36)
         self.btn_help.setStyleSheet("""

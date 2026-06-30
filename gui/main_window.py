@@ -9,8 +9,11 @@
 """
 
 import bisect
+import logging
 import statistics
 import time
+
+logger = logging.getLogger(__name__)
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
                               QHBoxLayout, QLabel, QScrollArea)
@@ -20,6 +23,7 @@ import pyqtgraph as pg
 from core.adb import ADBRunner
 from core.fps_sources import SmartFPSSource
 from core.sensors import TemperatureReader, FreqReader, PowerReader, MemReader, NetReader, batch_prime
+from core.app_reader import AppDataReader
 from gui.widgets import (COLORS, WINDOW_SECONDS, StatCard, FPSChart,
                           CrosshairChart, TimeAxisWidget,
                           DeviceInfoPanel, ChartPanel, SettingsPanel, HelpDialog)
@@ -27,6 +31,36 @@ from gui.worker import FPSWorker, GenericSensorWorker, DeviceInfoWorker, FPSUpda
 from gui.recorder import CSVRecorder
 
 from collections import deque
+
+
+class _AppReaderAdapter:
+    """将 AppDataReader 的方法适配为 Reader 接口（read() → dict）"""
+    def __init__(self, app_reader, method_name: str):
+        self._reader = app_reader
+        self._method = getattr(app_reader, method_name)
+    def read(self) -> dict:
+        return self._method()
+
+class _MergedMemReader:
+    """合并 App + ADB 内存数据：App 提供系统内存，ADB 补充 GPU 显存和 PSS"""
+    def __init__(self, app_reader, adb_reader):
+        self._app = app_reader
+        self._adb = adb_reader
+    def read(self) -> dict:
+        result = {}
+        # ADB 读 GPU 显存 + PSS（App 读不到）
+        if self._adb:
+            adb_data = self._adb.read()
+            if adb_data:
+                result.update(adb_data)
+        # App 读系统内存（更快更准），但不覆盖 ADB 已有的非零值
+        if self._app:
+            app_data = self._app.read_memory()
+            if app_data:
+                for k, v in app_data.items():
+                    if v and v > 0 and k not in result:
+                        result[k] = v
+        return result
 
 
 def _append_limit(lst: list, val, max_len: int) -> None:
@@ -478,6 +512,13 @@ class MainWindow(QMainWindow):
                     src.cleanup()
         elif self.fps_src and hasattr(self.fps_src, 'cleanup'):
             self.fps_src.cleanup()
+        # 停止配套 App 的 Service
+        if hasattr(self, '_app_connected') and self._app_connected:
+            self.adb.run_shell(
+                "am stopservice -n com.adbmonitor.companion/.MonitorService",
+                timeout=3)
+            self.app_reader = None
+            self._app_connected = False
         self.workers = []
         self.monitor_started = False
         self.paused = False
@@ -501,12 +542,23 @@ class MainWindow(QMainWindow):
         self.mem_reader = MemReader(self.adb, package=self.package)
         self.net_reader = NetReader(self.adb)
 
+        # 尝试启动配套 App，可用时替代功耗/内存/网络 Reader
+        self.app_reader = AppDataReader(self.adb)
+        self.app_reader.start_app(self.package or "")
+        import time; time.sleep(1.0)
+        if self.app_reader.probe():
+            self._app_connected = True
+            logger.info("Companion app connected, using app data for power/memory/network")
+        else:
+            self._app_connected = False
+            logger.info("Companion app not available, falling back to ADB readers")
+
         # 批量 prime：一次 ADB 调用预读所有传感器，预热连接 + 缓存首次读数
         batch_prime(self.adb,
                     temp_reader=self.temp_reader,
                     freq_reader=self.freq_reader,
-                    power_reader=self.power_reader,
-                    net_reader=self.net_reader)
+                    power_reader=self.power_reader if not self._app_connected else None,
+                    net_reader=self.net_reader if not self._app_connected else None)
 
         self._reset_all_data()
         self._create_monitor_workers()
@@ -561,17 +613,22 @@ class MainWindow(QMainWindow):
             self.temp_worker.ready.connect(self._on_worker_ready)
             self.workers.append(self.temp_worker)
 
-        self.power_worker = GenericSensorWorker(self.power_reader, interval=5.0)
+        # 功耗/内存/网络：App 可用时用 AppDataReader，否则用 ADB Reader
+        power_src = _AppReaderAdapter(self.app_reader, "read_power") if self._app_connected else self.power_reader
+        mem_src = _MergedMemReader(self.app_reader, self.mem_reader) if self._app_connected else self.mem_reader
+        net_src = _AppReaderAdapter(self.app_reader, "read_network") if self._app_connected else self.net_reader
+
+        self.power_worker = GenericSensorWorker(power_src, interval=5.0)
         self.power_worker.data_ready.connect(self._on_power)
         self.power_worker.ready.connect(self._on_worker_ready)
         self.workers.append(self.power_worker)
 
-        self.mem_worker = GenericSensorWorker(self.mem_reader, interval=5.0)
+        self.mem_worker = GenericSensorWorker(mem_src, interval=5.0)
         self.mem_worker.data_ready.connect(self._on_mem)
         self.mem_worker.ready.connect(self._on_worker_ready)
         self.workers.append(self.mem_worker)
 
-        self.net_worker = GenericSensorWorker(self.net_reader, interval=2.0)
+        self.net_worker = GenericSensorWorker(net_src, interval=2.0)
         self.net_worker.data_ready.connect(self._on_net)
         self.net_worker.ready.connect(self._on_worker_ready)
         self.workers.append(self.net_worker)

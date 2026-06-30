@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:background="#1E1E2E"
+    android:gravity="center_horizontal">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="ADB Monitor"
+        android:textSize="20sp"
+        android:textColor="#89B4FA"
+        android:textStyle="bold"
+        android:layout_marginTop="32dp" />
+
+    <TextView
+        android:id="@+id/tv_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="○ 已停止"
+        android:textSize="16sp"
+        android:textColor="#F38BA8"
+        android:layout_marginTop="24dp" />
+
+    <TextView
+        android:id="@+id/tv_target"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="目标: (未指定)"
+        android:textSize="13sp"
+        android:textColor="#A6ADC8"
+        android:layout_marginTop="16dp" />
+
+    <TextView
+        android:id="@+id/tv_port"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="端口: 18765"
+        android:textSize="13sp"
+        android:textColor="#A6ADC8"
+        android:layout_marginTop="4dp" />
+
+    <Button
+        android:id="@+id/btn_toggle"
+        android:layout_width="160dp"
+        android:layout_height="48dp"
+        android:text="启动"
+        android:textSize="14sp"
+        android:textColor="#1E1E2E"
+        android:backgroundTint="#A6E3A1"
+        android:layout_marginTop="32dp" />
+
+</LinearLayout>

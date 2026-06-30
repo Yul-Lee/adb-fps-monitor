@@ -47,6 +47,20 @@ class ADBRunner:
         except Exception:
             return "", 1
 
+    def run_host(self, *args: str, timeout: int = 5) -> tuple[str, int]:
+        """执行 ADB 主机端命令（非 shell），如 forward、push 等"""
+        full_cmd = self._base_cmd + list(args)
+        try:
+            result = subprocess.run(
+                full_cmd, capture_output=True, text=True, timeout=timeout,
+                encoding="utf-8", errors="replace", **ADB_FLAGS
+            )
+            return result.stdout, result.returncode
+        except subprocess.TimeoutExpired:
+            return "", 1
+        except Exception:
+            return "", 1
+
     def run_shell_retry(self, cmd: str, timeout: int = 8, retries: int = 2,
                         retry_delay: float = 0.3) -> tuple[str, int]:
         """带重试的 run_shell，高负载时 ADB 可能需要多次尝试"""

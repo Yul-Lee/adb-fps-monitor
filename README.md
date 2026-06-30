@@ -19,9 +19,10 @@ ADB 实时性能监控工具 — PyQtGraph 本地图形化界面
 - **温度监控** — 100+ 传感器映射，支持骁龙/玄戒/天玑/OPPO/OnePlus 平台
 - **CPU/GPU 频率** — 自动检测集群 + GPU 负载百分比
 - **GPU 负载检测** — 4 级降级：骁龙 kgsl gpubusy → Mali legacy → Mali devfreq → 回退路径
-- **功耗监控** — 三级降级：sysfs → charge_counter 差分 → batterystats 历史解析
+- **功耗监控** — 三级降级：sysfs → charge_counter 差分 → batterystats 历史解析（配套 App 可提供更精准的 BatteryManager 数据）
 - **GPU 显存 / PSS 内存** — 实时读取
-- **网络流量** — 上行/下行速率（/proc/net/dev）
+- **网络流量** — 上行/下行速率（/proc/net/dev，配套 App 可提供 per-app 流量）
+- **配套 Android App** — 可选，通过 HTTP 提供更精准的功耗/内存/网络数据（详见 [companion-app/](companion-app/)）
 - **FPS 统计面板** — 1% Low / 0.1% Low / Jank 次数（PerfDog 同款指标）
 - **CSV 数据录制** — 左侧面板一键录制，导出全部监控数据
 - **控制按钮** — 左侧面板开始/暂停/结束/录制，用户主动控制监控生命周期
@@ -122,8 +123,12 @@ gui/
   __init__.py          包初始化
   main_window.py       主窗口（UI 布局、图表、设备选择、控制逻辑、数据同步）
   worker.py            Worker 线程（FPSWorker + GenericSensorWorker 泛型传感器 + DeviceInfoWorker）
-  widgets.py           自定义组件（StatCard / CrosshairChart / FPSChart / TimeAxisWidget / DeviceInfoPanel / ChartPanel / SettingsPanel）
+  widgets.py           自定义组件（StatCard / CrosshairChart / FPSChart / TimeAxisWidget / DeviceInfoPanel / ChartPanel / SettingsPanel / HelpDialog）
   recorder.py          CSV 数据录制（CSVRecorder）
+  help/                帮助页面 HTML 内容（8 个章节）
+
+companion-app/         配套 Android App（可选，提供更精准的功耗/内存/网络数据）
+  ADBMonitorCompanion-v0.0.1-alpha.apk  预编译 APK
 
 tests/
   test_fps_sources.py  SmartFPS 状态机单元测试
@@ -323,6 +328,29 @@ A: 日志写入 `adb_fps_debug.log`，包含 SmartFPS 状态转换（如 `DISCOV
 | 游戏切换 Surface | 短暂 TRANSIENT_FAIL 后恢复 | ✅ 符合预期 |
 
 **AOD（Always-On Display）** 会通过 SFBuffFPS 产生 5–15 FPS 的假帧率数据，因为底层 buffer 来源已从目标应用切换到 AOD Surface。此限制需通过独立的 `DisplayStateMonitor`（基于 `dumpsys power/display` 检测息屏/AOD 状态）来解决，不在 SmartFPS 状态机范围内。
+
+## 配套 Android App（可选）
+
+配套 App 通过 Android API 直接读取设备数据，比 ADB 更精准：
+
+| 数据 | ADB 方式 | App 方式 | 改善 |
+|------|---------|---------|------|
+| 功耗 | charge_counter 差值估算 | BatteryManager API | 直接读电流，无需差值 |
+| 内存 | dumpsys meminfo (~3s) | ActivityManager API | 实时，无延迟 |
+| 网络 | /proc/net/dev（系统级） | TrafficStats per-uid | per-app 流量 |
+
+### 安装
+
+1. 将 `companion-app/ADBMonitorCompanion-v0.0.1-alpha.apk` 安装到设备
+2. 启动 `adb_fps_monitor.py`，自动检测并连接 App
+3. App 以前台 Service 运行，通知栏显示"监控中"
+
+### 从源码构建
+
+```bash
+# 需要 Android Studio + Android SDK 34
+# 打开 companion-app/ 目录，Build → Build APK(s)
+```
 
 ## 开发
 

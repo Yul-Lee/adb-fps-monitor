@@ -144,12 +144,24 @@ public class MonitorService extends Service {
     }
 
     private Notification buildNotification(String text) {
-        return new Notification.Builder(this, CHANNEL_ID)
+        Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
                 .setContentTitle("ADB Monitor")
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.ic_menu_info_details)
-                .setOngoing(true)
-                .build();
+                .setOngoing(true);
+
+        // Android 16+ (API 36): 实时通知
+        if (Build.VERSION.SDK_INT >= 36) {
+            try {
+                // setLiveUpdateInfo 用于前台 Service 实时状态展示
+                // 参数: icon, label (不使用 Notification.LiveUpdateInfo 类以保持编译兼容)
+                builder.getClass()
+                        .getMethod("setLiveUpdateInfo", int.class, CharSequence.class)
+                        .invoke(builder, android.R.drawable.ic_menu_info_details, text);
+            } catch (Exception ignored) {}
+        }
+
+        return builder.build();
     }
 
     private void updateNotification() {
@@ -180,7 +192,7 @@ public class MonitorService extends Service {
 
     private void createNotificationChannel() {
         NotificationChannel channel = new NotificationChannel(
-                CHANNEL_ID, "ADB Monitor", NotificationManager.IMPORTANCE_LOW);
+                CHANNEL_ID, "ADB Monitor", NotificationManager.IMPORTANCE_DEFAULT);
         channel.setDescription("ADB Monitor 后台监控服务");
         channel.setShowBadge(false);
         NotificationManager nm = getSystemService(NotificationManager.class);

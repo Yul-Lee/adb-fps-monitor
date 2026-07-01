@@ -43,6 +43,58 @@
         android:textColor="#A6ADC8"
         android:layout_marginTop="4dp" />
 
+    <!-- 实时数据面板 -->
+    <LinearLayout
+        android:id="@+id/data_panel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#313244"
+        android:padding="12dp"
+        android:layout_marginTop="20dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tv_power"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="功耗: --"
+            android:textSize="12sp"
+            android:textColor="#F9E2AF"
+            android:fontFamily="monospace" />
+
+        <TextView
+            android:id="@+id/tv_battery"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="电量: --"
+            android:textSize="12sp"
+            android:textColor="#FAB387"
+            android:fontFamily="monospace"
+            android:layout_marginTop="4dp" />
+
+        <TextView
+            android:id="@+id/tv_memory"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="内存: --"
+            android:textSize="12sp"
+            android:textColor="#CBA6F7"
+            android:fontFamily="monospace"
+            android:layout_marginTop="4dp" />
+
+        <TextView
+            android:id="@+id/tv_network"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="网络: --"
+            android:textSize="12sp"
+            android:textColor="#89DCEB"
+            android:fontFamily="monospace"
+            android:layout_marginTop="4dp" />
+
+    </LinearLayout>
+
     <Button
         android:id="@+id/btn_toggle"
         android:layout_width="160dp"
@@ -51,6 +103,6 @@
         android:textSize="14sp"
         android:textColor="#1E1E2E"
         android:backgroundTint="#A6E3A1"
-        android:layout_marginTop="32dp" />
+        android:layout_marginTop="20dp" />
 
 </LinearLayout>

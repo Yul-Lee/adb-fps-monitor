@@ -620,7 +620,8 @@ class ChartPanel(QFrame):
 class SettingsPanel(QWidget):
     """独立传感器选择面板 — 非模态浮动窗口，通过工具栏按钮 toggle"""
 
-    TEMP_IMPORTANT = {"CPU", "GPU", "表面", "电池", "CPU大核", "CPU中核", "CPU小核"}
+    TEMP_IMPORTANT = ["CPU", "GPU", "NPU", "SoC", "PMIC", "表面", "电池"]
+    CPU_GROUP = ["CPU超大核", "CPU大核", "CPU中核", "CPU小核", "CPU"]
     TEMP_GRID_COLS = 3  # 温度复选框网格列数
 
     # 信号：(类型, 名称, 状态)  类型: "temp"/"freq"/"core_usage"/"core_freq"
@@ -735,7 +736,20 @@ class SettingsPanel(QWidget):
         if name in self._temp_checkboxes:
             return self._temp_checkboxes[name]
         cb = QCheckBox(name)
-        cb.setChecked(name in self.TEMP_IMPORTANT)
+        # 默认勾选逻辑：
+        # - TEMP_IMPORTANT 中的类别 → 勾选
+        # - CPU_GROUP 中的细分传感器 → 勾选
+        # - "CPU"（通用）→ 仅在无细分 CPU 传感器时勾选
+        if name == "CPU":
+            has_detailed = any(n in self._temp_checkboxes for n in self.CPU_GROUP if n != "CPU")
+            cb.setChecked(not has_detailed)
+        elif name in self.TEMP_IMPORTANT or name in self.CPU_GROUP:
+            cb.setChecked(True)
+            # 新增细分 CPU 传感器时，取消勾选通用 "CPU"
+            if name in self.CPU_GROUP and name != "CPU" and "CPU" in self._temp_checkboxes:
+                self._temp_checkboxes["CPU"].setChecked(False)
+        else:
+            cb.setChecked(False)
         cb.setStyleSheet("color: #cdd6f4; font-size: 12px; padding: 2px 0 2px 8px;")
         cb.stateChanged.connect(lambda state, n=name: self.checkbox_changed.emit("temp", n, state))
         self._temp_checkboxes[name] = cb
